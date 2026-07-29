@@ -1,0 +1,12 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+.venv/
+
+# Environment
+.env
+
+# Local, machine-specific agent settings
+.claude/*.local.json

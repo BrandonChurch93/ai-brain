@@ -1,0 +1,235 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-brain.local/protocol/2026-07-29/protocol.schema.json",
+  "title": "Body Adapter Protocol v1",
+  "description": "Machine-readable contract for brain-to-body messaging. Source of truth over SPEC.md. Forward compatibility rule: schemas deliberately do NOT set additionalProperties:false; unknown fields MUST be accepted and ignored.",
+  "$ref": "#/$defs/Envelope",
+  "$defs": {
+    "Envelope": {
+      "type": "object",
+      "required": ["type", "id", "seq", "ts", "payload"],
+      "properties": {
+        "type": {
+          "enum": [
+            "hello", "welcome", "reject", "heartbeat", "event",
+            "command", "command_result", "list_capabilities", "manifest",
+            "estop", "estop_clear", "error"
+          ]
+        },
+        "id": { "type": "string", "minLength": 8, "description": "Unique message id, ULID or UUIDv7 recommended." },
+        "session": { "type": "string", "description": "Required on every message except hello and reject." },
+        "seq": { "type": "integer", "minimum": 1, "description": "Per-sender counter within one connection." },
+        "ts": { "$ref": "#/$defs/Timestamp" },
+        "trace_id": { "type": "string", "description": "Goal correlation id." },
+        "span_id": { "type": "string", "description": "Command correlation id. Required on command and command_result." },
+        "payload": { "type": "object" }
+      },
+      "allOf": [
+        { "if": { "properties": { "type": { "const": "hello" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/HelloPayload" } } } },
+        { "if": { "properties": { "type": { "const": "welcome" } } }, "then": { "required": ["session"], "properties": { "payload": { "$ref": "#/$defs/WelcomePayload" } } } },
+        { "if": { "properties": { "type": { "const": "reject" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/RejectPayload" } } } },
+        { "if": { "properties": { "type": { "const": "heartbeat" } } }, "then": { "required": ["session"], "properties": { "payload": { "$ref": "#/$defs/HeartbeatPayload" } } } },
+        { "if": { "properties": { "type": { "const": "event" } } }, "then": { "required": ["session"], "properties": { "payload": { "$ref": "#/$defs/EventPayload" } } } },
+        { "if": { "properties": { "type": { "const": "command" } } }, "then": { "required": ["session", "span_id"], "properties": { "payload": { "$ref": "#/$defs/CommandPayload" } } } },
+        { "if": { "properties": { "type": { "const": "command_result" } } }, "then": { "required": ["session", "span_id"], "properties": { "payload": { "$ref": "#/$defs/CommandResultPayload" } } } },
+        { "if": { "properties": { "type": { "const": "list_capabilities" } } }, "then": { "required": ["session"], "properties": { "payload": { "$ref": "#/$defs/EmptyPayload" } } } },
+        { "if": { "properties": { "type": { "const": "manifest" } } }, "then": { "required": ["session"], "properties": { "payload": { "$ref": "#/$defs/Manifest" } } } },
+        { "if": { "properties": { "type": { "const": "estop" } } }, "then": { "required": ["session"], "properties": { "payload": { "$ref": "#/$defs/EstopPayload" } } } },
+        { "if": { "properties": { "type": { "const": "estop_clear" } } }, "then": { "required": ["session"], "properties": { "payload": { "$ref": "#/$defs/EstopClearPayload" } } } },
+        { "if": { "properties": { "type": { "const": "error" } } }, "then": { "required": ["session"], "properties": { "payload": { "$ref": "#/$defs/ErrorPayload" } } } }
+      ]
+    },
+
+    "Timestamp": {
+      "type": "object",
+      "required": ["mono_ns", "utc"],
+      "properties": {
+        "mono_ns": { "type": "integer", "minimum": 0, "description": "Sender monotonic clock, nanoseconds. Ordering within a device." },
+        "utc": { "type": "string", "format": "date-time", "description": "Sender wall clock, ISO 8601 UTC. Cross-device correlation only." }
+      }
+    },
+
+    "HelloPayload": {
+      "type": "object",
+      "required": ["protocol_versions", "auth_token", "manifest"],
+      "properties": {
+        "protocol_versions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ProtocolVersion" },
+          "minItems": 1,
+          "description": "Supported versions, newest first."
+        },
+        "auth_token": { "type": "string", "minLength": 1 },
+        "manifest": { "$ref": "#/$defs/Manifest" }
+      }
+    },
+
+    "WelcomePayload": {
+      "type": "object",
+      "required": ["protocol_version", "session", "server", "utc_now", "heartbeat"],
+      "properties": {
+        "protocol_version": { "$ref": "#/$defs/ProtocolVersion" },
+        "session": { "type": "string" },
+        "server": {
+          "type": "object",
+          "required": ["name", "version"],
+          "properties": { "name": { "type": "string" }, "version": { "type": "string" } }
+        },
+        "utc_now": { "type": "string", "format": "date-time" },
+        "heartbeat": {
+          "type": "object",
+          "required": ["interval_ms", "lease_ms"],
+          "properties": {
+            "interval_ms": { "type": "integer", "minimum": 100 },
+            "lease_ms": { "type": "integer", "minimum": 300 }
+          }
+        },
+        "capability_ack": {
+          "type": "object",
+          "properties": {
+            "recognized": { "type": "array", "items": { "type": "string" } },
+            "unrecognized": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
+    },
+
+    "RejectPayload": {
+      "type": "object",
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "enum": ["unsupported_version", "auth_failed", "malformed_hello"] },
+        "message": { "type": "string" },
+        "supported": { "type": "array", "items": { "$ref": "#/$defs/ProtocolVersion" } }
+      }
+    },
+
+    "HeartbeatPayload": {
+      "type": "object",
+      "required": ["state"],
+      "properties": {
+        "state": {
+          "enum": ["ok", "safe_hold", "estopped", "active", "degraded"],
+          "description": "Bodies send ok|safe_hold|estopped. Brain sends active|degraded."
+        },
+        "uptime_ms": { "type": "integer", "minimum": 0 }
+      }
+    },
+
+    "EventPayload": {
+      "type": "object",
+      "required": ["capability", "event", "data"],
+      "properties": {
+        "capability": { "type": "string" },
+        "event": { "type": "string", "description": "Event name from the capability class registry, e.g. frame, audio_chunk, state." },
+        "data": { "type": "object" },
+        "droppable": { "type": "boolean", "default": false, "description": "true means the sender may skip under backpressure." }
+      }
+    },
+
+    "CommandPayload": {
+      "type": "object",
+      "required": ["capability", "action", "params", "ttl_ms"],
+      "properties": {
+        "capability": { "type": "string" },
+        "action": { "type": "string", "description": "A registry action for the capability's class, or do_command." },
+        "params": { "type": "object" },
+        "ttl_ms": { "type": "integer", "minimum": 1, "description": "Lifespan. Not begun within ttl_ms of body receipt means never executed, terminal status expired." },
+        "expects_result": { "type": "boolean", "default": true }
+      }
+    },
+
+    "CommandResultPayload": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": { "enum": ["accepted", "running", "succeeded", "failed", "expired", "rejected"] },
+        "progress": { "type": "number", "minimum": 0, "maximum": 1 },
+        "data": { "type": "object" },
+        "error": {
+          "anyOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["code", "message"],
+              "properties": { "code": { "type": "string" }, "message": { "type": "string" } }
+            }
+          ]
+        }
+      }
+    },
+
+    "EmptyPayload": { "type": "object" },
+
+    "EstopPayload": {
+      "type": "object",
+      "required": ["reason"],
+      "properties": { "reason": { "type": "string", "minLength": 1 } }
+    },
+
+    "EstopClearPayload": {
+      "type": "object",
+      "required": ["reason", "operator"],
+      "properties": {
+        "reason": { "type": "string", "minLength": 1 },
+        "operator": { "type": "string", "minLength": 1 }
+      }
+    },
+
+    "ErrorPayload": {
+      "type": "object",
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "enum": ["malformed", "unknown_type", "unknown_capability", "unknown_action", "invalid_params", "busy", "latched_safe_state", "internal"]
+        },
+        "message": { "type": "string" },
+        "ref_id": { "type": "string", "description": "id of the offending message, when known." }
+      }
+    },
+
+    "Manifest": {
+      "type": "object",
+      "required": ["body_id", "hardware_class", "boot_state", "adapter", "capabilities"],
+      "properties": {
+        "body_id": { "type": "string", "minLength": 1, "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "display_name": { "type": "string" },
+        "hardware_class": { "enum": ["workstation", "sbc", "microcontroller", "mobile_base", "virtual"] },
+        "boot_state": { "enum": ["ok", "safe_hold"], "description": "Bodies with actuation MUST declare safe_hold." },
+        "adapter": {
+          "type": "object",
+          "required": ["name", "version"],
+          "properties": { "name": { "type": "string" }, "version": { "type": "string" } }
+        },
+        "capabilities": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/Capability" },
+          "description": "MUST include the system capability with id sys."
+        }
+      }
+    },
+
+    "Capability": {
+      "type": "object",
+      "required": ["id", "class"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "pattern": "^[a-z0-9][a-z0-9_-]*$" },
+        "class": {
+          "enum": ["system", "camera", "microphone", "speaker", "display", "differential_drive", "range_sensor", "virtual"],
+          "description": "v1 registry. The registry grows additively; adding a class is not a version bump."
+        },
+        "attributes": { "type": "object", "description": "Class-specific static properties (formats, rates, bounds)." },
+        "actions": { "type": "array", "items": { "type": "string" }, "description": "Subset of the class registry actions this capability supports." },
+        "events": { "type": "array", "items": { "type": "string" }, "description": "Subset of the class registry events this capability emits." },
+        "do_command": { "type": "boolean", "default": true, "description": "The generic escape hatch. Implicitly true on every capability." }
+      }
+    },
+
+    "ProtocolVersion": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+      "description": "Date-based, bumped only on backward-incompatible change."
+    }
+  }
+}
