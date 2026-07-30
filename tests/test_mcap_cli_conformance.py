@@ -128,7 +128,8 @@ def test_info_reports_every_channel(session_file: Path) -> None:
     for message_type in message_types():
         assert f"/{message_type}" in result.stdout
     assert "/session_meta" in result.stdout
-    assert "channels:    13" in result.stdout
+    assert "/llm_io" in result.stdout
+    assert "channels:    14" in result.stdout
 
 
 def test_the_cli_can_read_every_message_back(session_file: Path) -> None:

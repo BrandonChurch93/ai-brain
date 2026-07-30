@@ -253,12 +253,19 @@ class BrainServer:
         await connection.send(encode(outcome.welcome))
 
         if self._recorder is not None:
-            self._recorder.record_session(
-                session=outcome.session,
-                body_id=outcome.body_id,
-                protocol_version=outcome.protocol_version,
-                manifest=outcome.manifest,
-            )
+            # Guarded like every other write: this one sits directly in the
+            # handshake path, so an unguarded failure here would refuse a
+            # body over a logging problem.
+            try:
+                self._recorder.record_session(
+                    session=outcome.session,
+                    body_id=outcome.body_id,
+                    protocol_version=outcome.protocol_version,
+                    manifest=outcome.manifest,
+                )
+            except Exception:
+                log.exception("failed to record session_meta for %s", outcome.session)
+
             # hello arrived before the session existed, so it is recorded
             # here rather than in the receive loop. Leaving it out would
             # lose the manifest exchange the session was built on.

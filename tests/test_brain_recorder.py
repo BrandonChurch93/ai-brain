@@ -12,11 +12,15 @@ import json
 from pathlib import Path
 from typing import Any
 
+import jsonschema
 import pytest
 from mcap.reader import make_reader
 
 from brain.config import ServerConfig
 from brain.recorder import (
+    LLM_IO_SCHEMA,
+    LLM_IO_TOPIC,
+    SESSION_META_SCHEMA,
     SESSION_META_TOPIC,
     FlightRecorder,
     topic_for,
@@ -24,7 +28,7 @@ from brain.recorder import (
 from wire import Manifest, decode_object, message_types, schema_id
 from wire.stamp import epoch_ns, now
 
-EXPECTED_CHANNELS = 13  # twelve message types plus session_meta
+EXPECTED_CHANNELS = 14  # twelve message types, plus session_meta and llm_io
 
 
 def manifest() -> Manifest:
@@ -117,7 +121,7 @@ def test_every_message_type_gets_a_channel_even_when_unused(recorded: Path) -> N
     summary, _ = read_back(recorded)
 
     topics = {channel.topic for channel in summary.channels.values()}
-    expected = {topic_for(name) for name in message_types()} | {SESSION_META_TOPIC}
+    expected = {topic_for(name) for name in message_types()} | {SESSION_META_TOPIC, LLM_IO_TOPIC}
 
     assert topics == expected
     assert len(topics) == EXPECTED_CHANNELS
@@ -316,6 +320,134 @@ def test_an_empty_session_is_still_a_valid_file(tmp_path: Path) -> None:
     summary, messages = read_back(path)
     assert messages == []
     assert len(summary.channels) == EXPECTED_CHANNELS
+
+
+# The llm_io channel (checklist step 2.3)
+
+
+def test_llm_io_channel_exists_before_anything_writes_to_it(recorded: Path) -> None:
+    """Defined in Phase 2, populated in Phase 5. The channel is present and
+    empty, which is the honest representation of a session with no LLM calls."""
+    summary, _ = read_back(recorded)
+
+    topics = {channel.topic for channel in summary.channels.values()}
+    assert LLM_IO_TOPIC in topics
+
+    counts = {
+        summary.channels[channel_id].topic: count
+        for channel_id, count in summary.statistics.channel_message_counts.items()  # type: ignore[union-attr]
+    }
+    assert LLM_IO_TOPIC not in counts
+
+
+def test_llm_io_schema_is_embedded(recorded: Path) -> None:
+    summary, _ = read_back(recorded)
+
+    schemas = {schema.name: schema for schema in summary.schemas.values()}
+    assert "llm_io" in schemas
+    assert schemas["llm_io"].encoding == "jsonschema"
+
+    embedded = json.loads(schemas["llm_io"].data)
+    assert set(embedded["required"]) >= {
+        "role",
+        "provider",
+        "model",
+        "prompt",
+        "response",
+        "tokens",
+        "latency_ms",
+    }
+
+
+def test_an_llm_exchange_records_and_validates(tmp_path: Path) -> None:
+    """The schema is exercisable, not decorative: a record written through
+    the normal path is checked against the schema the file declares."""
+    path = tmp_path / "llm.mcap"
+    requested = now()
+    responded = now()
+
+    with FlightRecorder(path) as recorder:
+        recorder.record_llm_io(
+            role="planner",
+            provider="anthropic",
+            model="a-model",
+            prompt={"messages": [{"role": "user", "content": "drive forward"}]},
+            response={"plan": {"steps": []}},
+            tokens={"prompt": 120, "completion": 48, "total": 168},
+            latency_ms=812.5,
+            t_request=requested,
+            t_response=responded,
+            session="sess_1",
+            trace_id="trc_patrol",
+        )
+
+    _, messages = read_back(path)
+    topic, record = messages[0]
+
+    assert topic == LLM_IO_TOPIC
+    jsonschema.validate(record, LLM_IO_SCHEMA)
+
+    assert record["role"] == "planner"
+    assert record["model"] == "a-model"
+    assert record["tokens"]["total"] == 168
+    assert record["latency_ms"] == 812.5
+    assert record["trace_id"] == "trc_patrol"
+
+
+def test_llm_prompt_and_response_are_stored_whole(tmp_path: Path) -> None:
+    """ADR-0005 exists so "why did it do that?" is answerable, and a
+    truncated prompt cannot answer it. Replay also re-feeds recorded output
+    rather than re-buying it, which needs the whole thing."""
+    path = tmp_path / "big.mcap"
+    long_prompt = "x" * 50_000
+
+    with FlightRecorder(path) as recorder:
+        recorder.record_llm_io(
+            role="planner",
+            provider="anthropic",
+            model="a-model",
+            prompt=long_prompt,
+            response=long_prompt,
+            latency_ms=1.0,
+            t_request=now(),
+            t_response=now(),
+        )
+
+    _, messages = read_back(path)
+    assert messages[0][1]["prompt"] == long_prompt
+    assert messages[0][1]["response"] == long_prompt
+
+
+def test_a_refusal_is_a_recordable_outcome(tmp_path: Path) -> None:
+    """An infeasible goal refused by the planner is a real result, not an
+    error, and the log should not flatten the two together (5.3)."""
+    path = tmp_path / "refusal.mcap"
+
+    with FlightRecorder(path) as recorder:
+        recorder.record_llm_io(
+            role="planner",
+            provider="anthropic",
+            model="a-model",
+            prompt="fly to the moon",
+            response={"refusal": "no capability provides flight"},
+            latency_ms=42.0,
+            t_request=now(),
+            t_response=now(),
+            status="refusal",
+        )
+
+    _, messages = read_back(path)
+    record = messages[0][1]
+    jsonschema.validate(record, LLM_IO_SCHEMA)
+    assert record["status"] == "refusal"
+
+
+def test_session_meta_records_validate_against_their_schema(recorded: Path) -> None:
+    """A file that declares a schema its own records violate is lying to
+    whoever opens it."""
+    _, messages = read_back(recorded)
+    meta = next(record for topic, record in messages if topic == SESSION_META_TOPIC)
+    jsonschema.validate(meta, SESSION_META_SCHEMA)
 
 
 # Config

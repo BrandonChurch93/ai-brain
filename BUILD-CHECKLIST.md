@@ -58,7 +58,7 @@ References used throughout: CLAUDE.md (rules), STATE.md (V1 definition and accep
 - [ ] 2.2 Replay reader: load a session file, reconstruct the ordered message sequence, re-feed programmatically.
       refs: ADR-0005
       done: record a synthetic session, replay it, assert the reconstructed sequence is byte-identical.
-- [ ] 2.3 Define (empty for now) the `llm_io` channel schema: prompt, response, model, role, token counts, latency. Populated in Phase 5.
+- [x] 2.3 Define (empty for now) the `llm_io` channel schema: prompt, response, model, role, token counts, latency. Populated in Phase 5.
       refs: ADR-0005, ADR-0007
       done: channel exists and is asserted in the writer test.
 

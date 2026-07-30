@@ -36,8 +36,19 @@ Direction = Literal["rx", "tx"]
 #: Channel carrying one record per session, written at `welcome`.
 SESSION_META_TOPIC = "/session_meta"
 
+#: Channel carrying every exchange with a language model (ADR-0005 point 1,
+#: ADR-0007 point 4). Defined now and populated in Phase 5, so the shape is
+#: settled before anything depends on it and old sessions stay readable.
+LLM_IO_TOPIC = "/llm_io"
+
 PROTOCOL_SCHEMA_NAME = "body-adapter-protocol"
 SESSION_META_SCHEMA_NAME = "session_meta"
+LLM_IO_SCHEMA_NAME = "llm_io"
+
+#: The roles config routes models to (ADR-0007 point 2). Not an enum in the
+#: schema: the routing table grows, and a log that refuses to record a role
+#: it has not met is a log that loses exactly the novel event worth keeping.
+LLM_ROLES = ("planner", "conversation", "vision", "classifier", "reflex")
 
 #: Shape of a `session_meta` record. A log construct, not wire format, so it
 #: is defined here rather than in `protocol/schemas/`.
@@ -62,6 +73,65 @@ SESSION_META_SCHEMA: dict[str, Any] = {
         "schema_id": {"type": "string"},
         "manifest": {"type": "object"},
         "opened_utc": {"type": "string"},
+    },
+}
+
+
+#: Shape of an `llm_io` record: one request and its response.
+#:
+#: Prompt and response are stored whole, never truncated. ADR-0005 exists so
+#: "why did it do that?" is answerable, and a summarised prompt cannot answer
+#: it. Replay also re-feeds recorded model output rather than re-buying it
+#: (ADR-0005 point 4), which only works if what was recorded is complete.
+LLM_IO_SCHEMA: dict[str, Any] = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "LLM exchange",
+    "type": "object",
+    "required": [
+        "index",
+        "role",
+        "provider",
+        "model",
+        "prompt",
+        "response",
+        "tokens",
+        "latency_ms",
+        "t_request",
+        "t_response",
+    ],
+    "properties": {
+        "index": {"type": "integer", "description": "File-wide write order."},
+        "session": {"type": ["string", "null"]},
+        "trace_id": {
+            "type": ["string", "null"],
+            "description": "The goal this call served (ADR-0005 point 3).",
+        },
+        "span_id": {"type": ["string", "null"]},
+        "role": {
+            "type": "string",
+            "description": "Routing role: planner, conversation, vision, classifier, reflex.",
+        },
+        "provider": {"type": "string"},
+        "model": {"type": "string"},
+        "prompt": {"description": "The request as sent, whole. Shape is provider-specific."},
+        "response": {"description": "The response as received, whole."},
+        "tokens": {
+            "type": "object",
+            "description": "Cost telemetry per decision (ADR-0007 point 4).",
+            "properties": {
+                "prompt": {"type": ["integer", "null"]},
+                "completion": {"type": ["integer", "null"]},
+                "total": {"type": ["integer", "null"]},
+            },
+        },
+        "latency_ms": {"type": "number", "minimum": 0},
+        "t_request": {"type": "object"},
+        "t_response": {"type": "object"},
+        "status": {
+            "type": "string",
+            "description": "ok, error, or refusal. A refusal is a real outcome, not a failure.",
+        },
+        "error": {"type": ["object", "null"]},
     },
 }
 
@@ -142,6 +212,17 @@ class FlightRecorder:
             schema_id=meta,
         )
 
+        llm = writer.register_schema(
+            name=LLM_IO_SCHEMA_NAME,
+            encoding="jsonschema",
+            data=json.dumps(LLM_IO_SCHEMA).encode("utf-8"),
+        )
+        self._channels[LLM_IO_TOPIC] = writer.register_channel(
+            topic=LLM_IO_TOPIC,
+            message_encoding="json",
+            schema_id=llm,
+        )
+
         self._writer = writer
         return self
 
@@ -191,6 +272,52 @@ class FlightRecorder:
             },
             log_time=epoch_ns(stamp),
             publish_time=epoch_ns(stamp),
+        )
+
+    def record_llm_io(
+        self,
+        *,
+        role: str,
+        provider: str,
+        model: str,
+        prompt: Any,
+        response: Any,
+        latency_ms: float,
+        t_request: Timestamp,
+        t_response: Timestamp,
+        tokens: dict[str, int | None] | None = None,
+        session: str | None = None,
+        trace_id: str | None = None,
+        span_id: str | None = None,
+        status: str = "ok",
+        error: dict[str, Any] | None = None,
+    ) -> None:
+        """Log one exchange with a language model.
+
+        The channel is defined now and used from Phase 5. Writing it here
+        rather than later means the shape is settled before anything depends
+        on it, and a session recorded today stays readable then.
+        """
+        self._write(
+            LLM_IO_TOPIC,
+            {
+                "session": session,
+                "trace_id": trace_id,
+                "span_id": span_id,
+                "role": role,
+                "provider": provider,
+                "model": model,
+                "prompt": prompt,
+                "response": response,
+                "tokens": tokens if tokens is not None else {},
+                "latency_ms": latency_ms,
+                "t_request": {"mono_ns": t_request.mono_ns, "utc": t_request.utc},
+                "t_response": {"mono_ns": t_response.mono_ns, "utc": t_response.utc},
+                "status": status,
+                "error": error,
+            },
+            log_time=epoch_ns(t_response),
+            publish_time=epoch_ns(t_request),
         )
 
     def record(
