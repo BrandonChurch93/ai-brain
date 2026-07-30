@@ -44,7 +44,7 @@ References used throughout: CLAUDE.md (rules), STATE.md (V1 definition and accep
 - [x] 1.3 Session registry: session ids, per-sender seq tracking (gap detection logged), t_received stamping on every inbound message.
       refs: SPEC §4
       done: unit tests for seq gaps and duplicate handling.
-- [ ] 1.4 Brain-side heartbeat loop and lease detection: send on interval, mark body LOST on lease miss, fail outstanding spans brain-side.
+- [x] 1.4 Brain-side heartbeat loop and lease detection: send on interval, mark body LOST on lease miss, fail outstanding spans brain-side.
       refs: SPEC §6.4, §8.1; ADR-0006
       done: test with a client that goes silent; LOST within lease_ms, spans failed.
 
