@@ -35,7 +35,7 @@ References used throughout: CLAUDE.md (rules), STATE.md (V1 definition and accep
 
 ## Phase 1 · Session core (brain as server)
 
-- [ ] 1.1 Envelope models (pydantic) mirroring the schema; every inbound and outbound message validated at the boundary in both directions.
+- [x] 1.1 Envelope models (pydantic) mirroring the schema; every inbound and outbound message validated at the boundary in both directions.
       refs: SPEC §4; CLAUDE.md rule 3
       done: round-trip property test: model → JSON → schema-valid → model.
 - [ ] 1.2 WebSocket server (`websockets` lib): subprotocol check (`body-adapter-protocol.v1`), hello/welcome/reject, constant-time auth token compare (`BRAIN_AUTH_TOKEN`), version negotiation exactly per SPEC §5.
