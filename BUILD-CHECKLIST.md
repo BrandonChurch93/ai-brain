@@ -41,7 +41,7 @@ References used throughout: CLAUDE.md (rules), STATE.md (V1 definition and accep
 - [x] 1.2 WebSocket server (`websockets` lib): subprotocol check (`body-adapter-protocol.v1`), hello/welcome/reject, constant-time auth token compare (`BRAIN_AUTH_TOKEN`), version negotiation exactly per SPEC §5.
       refs: SPEC §3, §5, §6.1-6.3
       done: integration test with a scripted client: good hello gets welcome; wrong token gets reject auth_failed; unknown version gets reject with supported list; wrong subprotocol refused at upgrade.
-- [ ] 1.3 Session registry: session ids, per-sender seq tracking (gap detection logged), t_received stamping on every inbound message.
+- [x] 1.3 Session registry: session ids, per-sender seq tracking (gap detection logged), t_received stamping on every inbound message.
       refs: SPEC §4
       done: unit tests for seq gaps and duplicate handling.
 - [ ] 1.4 Brain-side heartbeat loop and lease detection: send on interval, mark body LOST on lease miss, fail outstanding spans brain-side.
