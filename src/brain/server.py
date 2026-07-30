@@ -15,7 +15,7 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 
@@ -24,6 +24,7 @@ from websockets.asyncio.server import Server, ServerConnection, serve
 
 from brain.config import ServerConfig
 from brain.handshake import Accepted, Refused, is_hello, malformed_hello, open_session
+from brain.registry import Reception, SessionRecord, SessionRegistry
 from wire import (
     SUBPROTOCOL,
     MalformedFrameError,
@@ -32,13 +33,14 @@ from wire import (
     decode,
     encode,
 )
-from wire.stamp import SeqCounter
+from wire.stamp import SeqCounter, now
 
 log = logging.getLogger("brain.server")
 
-#: Called with (session, message) for every validated inbound message after
-#: the handshake. Phase 1.3 replaces this seam with the session registry.
-MessageHandler = Callable[["SessionState", Message], Awaitable[None]]
+#: Called with (session, reception) for every validated inbound message after
+#: the handshake, carrying the brain's own t_received and what the sequence
+#: number said about it.
+MessageHandler = Callable[["SessionState", Reception], Awaitable[None]]
 
 
 def _server_version() -> str:
@@ -50,13 +52,30 @@ def _server_version() -> str:
 
 @dataclass(slots=True)
 class SessionState:
-    """One accepted connection, from `welcome` to socket close."""
+    """A registry record plus the socket it belongs to.
 
-    session: str
-    body_id: str
-    protocol_version: str
+    The registry stays socket-free so its bookkeeping can be tested without a
+    network; this is where the two meet.
+    """
+
+    record: SessionRecord
     connection: ServerConnection
-    outbound_seq: SeqCounter = field(default_factory=SeqCounter)
+
+    @property
+    def session(self) -> str:
+        return self.record.session
+
+    @property
+    def body_id(self) -> str:
+        return self.record.body_id
+
+    @property
+    def protocol_version(self) -> str:
+        return self.record.protocol_version
+
+    @property
+    def outbound_seq(self) -> SeqCounter:
+        return self.record.outbound
 
     async def send(self, message: Message) -> None:
         await self.connection.send(encode(message))
@@ -74,11 +93,16 @@ class BrainServer:
         self._config = config
         self._on_message = on_message
         self._server: Server | None = None
+        self._registry = SessionRegistry()
         self._sessions: dict[str, SessionState] = {}
 
     @property
     def sessions(self) -> dict[str, SessionState]:
         return dict(self._sessions)
+
+    @property
+    def registry(self) -> SessionRegistry:
+        return self._registry
 
     @property
     def port(self) -> int:
@@ -128,6 +152,7 @@ class BrainServer:
             await self._steady_state(state)
         finally:
             self._sessions.pop(state.session, None)
+            self._registry.close(state.session)
             log.info("session %s closed", state.session)
 
     async def _open(self, connection: ServerConnection, seq: SeqCounter) -> SessionState | None:
@@ -161,13 +186,16 @@ class BrainServer:
 
         assert isinstance(outcome, Accepted)
         await connection.send(encode(outcome.welcome))
-        return SessionState(
+
+        record = self._registry.open(
             session=outcome.session,
             body_id=outcome.body_id,
             protocol_version=outcome.protocol_version,
-            connection=connection,
-            outbound_seq=seq,
+            manifest=outcome.manifest,
+            first_seq=outcome.first_seq,
+            outbound=seq,
         )
+        return SessionState(record=record, connection=connection)
 
     async def _refuse(self, connection: ServerConnection, refused: Refused) -> None:
         log.info("rejecting body: %s (%s)", refused.reason, refused.reject.payload.code)
@@ -177,17 +205,22 @@ class BrainServer:
         return None
 
     async def _steady_state(self, state: SessionState) -> None:
-        """Receive and validate. Heartbeats, sequencing, and dispatch arrive
-        in checklist steps 1.3 and 1.4."""
+        """Receive, stamp, record, dispatch. Heartbeats arrive in step 1.4."""
         try:
             async for raw in state.connection:
+                # Stamped before parsing, so t_received measures the wire
+                # rather than how long validation took (SPEC section 4).
+                t_received = now()
+
                 try:
                     message = decode(raw)
                 except (MalformedFrameError, ProtocolValidationError) as exc:
                     log.warning("session %s sent an invalid message: %s", state.session, exc)
                     continue
 
+                reception = self._registry.receive(state.session, message, t_received)
+
                 if self._on_message is not None:
-                    await self._on_message(state, message)
+                    await self._on_message(state, reception)
         except websockets.exceptions.ConnectionClosed:
             return

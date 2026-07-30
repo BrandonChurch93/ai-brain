@@ -11,6 +11,7 @@ from dataclasses import dataclass
 
 from wire import (
     HelloEnvelope,
+    Manifest,
     Message,
     RejectEnvelope,
     RejectPayload,
@@ -34,6 +35,12 @@ class Accepted:
     session: str
     protocol_version: str
     body_id: str
+    #: The body's declared affordances, kept for the validator to ground
+    #: commands against later (ADR-0003, ADR-0004).
+    manifest: Manifest
+    #: `seq` of the body's `hello`, which establishes where its counter
+    #: started for the session registry (SPEC section 4).
+    first_seq: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,6 +152,8 @@ def open_session(
         session=session,
         protocol_version=chosen,
         body_id=hello.payload.manifest.body_id,
+        manifest=hello.payload.manifest,
+        first_seq=hello.seq,
     )
 
 

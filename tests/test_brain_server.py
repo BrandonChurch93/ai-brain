@@ -16,6 +16,7 @@ import websockets
 from websockets.asyncio.client import connect
 
 from brain.config import ServerConfig
+from brain.registry import SeqStatus
 from brain.server import BrainServer
 from wire import SUBPROTOCOL, decode
 from wire.schema import protocol_version
@@ -196,14 +197,26 @@ async def test_two_bodies_get_distinct_sessions(server: BrainServer) -> None:
         assert {one.session, two.session} <= set(server.sessions)
 
 
-async def test_inbound_messages_reach_the_handler(server: BrainServer) -> None:
-    """The seam checklist step 1.3 builds the session registry on."""
+def heartbeat_frame(session: str, seq: int) -> str:
+    return json.dumps(
+        {
+            "type": "heartbeat",
+            "id": f"01JZQK8N4T0000000000000{seq:03d}",
+            "session": session,
+            "seq": seq,
+            "ts": {"mono_ns": seq * 1000, "utc": "2026-07-29T18:00:01.000Z"},
+            "payload": {"state": "ok", "uptime_ms": 10},
+        }
+    )
+
+
+async def test_inbound_messages_reach_the_handler_with_a_reception() -> None:
     received: list[Any] = []
 
     config = ServerConfig(host="127.0.0.1", port=0, auth_token=TOKEN)
 
-    async def collect(state: Any, message: Any) -> None:
-        received.append((state.session, message))
+    async def collect(state: Any, reception: Any) -> None:
+        received.append((state.session, reception))
 
     async with BrainServer(config, on_message=collect) as running:
         url = f"ws://127.0.0.1:{running.port}"
@@ -211,18 +224,7 @@ async def test_inbound_messages_reach_the_handler(server: BrainServer) -> None:
             await client.send(hello_frame())
             welcome = decode(await client.recv())
 
-            await client.send(
-                json.dumps(
-                    {
-                        "type": "heartbeat",
-                        "id": "01JZQK8N4T00000000000000F1",
-                        "session": welcome.session,
-                        "seq": 2,
-                        "ts": {"mono_ns": 2, "utc": "2026-07-29T18:00:01.000Z"},
-                        "payload": {"state": "ok", "uptime_ms": 10},
-                    }
-                )
-            )
+            await client.send(heartbeat_frame(welcome.session, 2))
 
             for _ in range(200):
                 if received:
@@ -230,10 +232,83 @@ async def test_inbound_messages_reach_the_handler(server: BrainServer) -> None:
                 await _tick()
 
     assert received, "handler never saw the heartbeat"
-    session, message = received[0]
+    session, reception = received[0]
     assert session == welcome.session
-    assert message.type == "heartbeat"
-    assert message.payload.state == "ok"
+    assert reception.message.type == "heartbeat"
+    assert reception.message.payload.state == "ok"
+    assert reception.seq_status is SeqStatus.IN_ORDER
+    assert reception.t_received.mono_ns > 0
+
+
+async def test_the_server_detects_a_seq_gap_end_to_end() -> None:
+    """The body's hello was seq 1, so jumping to 5 skips three."""
+    received: list[Any] = []
+
+    config = ServerConfig(host="127.0.0.1", port=0, auth_token=TOKEN)
+
+    async def collect(state: Any, reception: Any) -> None:
+        received.append(reception)
+
+    async with BrainServer(config, on_message=collect) as running:
+        url = f"ws://127.0.0.1:{running.port}"
+        async with connect(url, subprotocols=[SUBPROTOCOL]) as client:  # type: ignore[list-item]
+            await client.send(hello_frame())
+            welcome = decode(await client.recv())
+
+            await client.send(heartbeat_frame(welcome.session, 5))
+
+            for _ in range(200):
+                if received:
+                    break
+                await _tick()
+
+    assert received
+    assert received[0].seq_status is SeqStatus.GAP
+    assert received[0].missing == 3
+
+
+async def test_a_session_leaves_the_registry_when_the_socket_closes(
+    server: BrainServer,
+) -> None:
+    url = f"ws://127.0.0.1:{server.port}"
+    async with connect(url, subprotocols=[SUBPROTOCOL]) as client:  # type: ignore[list-item]
+        await client.send(hello_frame())
+        welcome = decode(await client.recv())
+        assert welcome.session in server.registry
+
+    for _ in range(200):
+        if welcome.session not in server.registry:
+            break
+        await _tick()
+
+    assert welcome.session not in server.registry
+    assert welcome.session not in server.sessions
+
+
+async def test_the_registry_holds_the_manifest_from_hello(server: BrainServer) -> None:
+    url = f"ws://127.0.0.1:{server.port}"
+    async with connect(url, subprotocols=[SUBPROTOCOL]) as client:  # type: ignore[list-item]
+        await client.send(hello_frame())
+        welcome = decode(await client.recv())
+
+        record = server.registry.get(welcome.session)
+        assert record is not None
+        assert record.manifest.body_id == "mock-01"
+        assert [c.id for c in record.manifest.capabilities] == ["sys"]
+
+
+async def test_outbound_seq_continues_after_welcome(server: BrainServer) -> None:
+    """`welcome` was seq 1; the next thing the brain sends must be seq 2, not
+    a repeat of 1."""
+    url = f"ws://127.0.0.1:{server.port}"
+    async with connect(url, subprotocols=[SUBPROTOCOL]) as client:  # type: ignore[list-item]
+        await client.send(hello_frame())
+        welcome = decode(await client.recv())
+
+        assert welcome.seq == 1
+        record = server.registry.get(welcome.session)
+        assert record is not None
+        assert record.outbound.peek == 2
 
 
 async def test_an_invalid_message_after_welcome_does_not_kill_the_session(
