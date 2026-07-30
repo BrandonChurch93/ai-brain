@@ -52,6 +52,15 @@ def test_subprotocol_carries_no_project_name() -> None:
     assert SUBPROTOCOL == "body-adapter-protocol.v1"
 
 
+def test_schema_id_carries_no_project_name() -> None:
+    """ADR-0000 rule 5: no brand string in schema names.
+
+    A URN rather than an https URL, so the identifier does not imply a domain
+    we own or a document we serve.
+    """
+    assert schema_id() == "urn:body-adapter-protocol:2026-07-29"
+
+
 def test_env_override_points_the_loader_elsewhere(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

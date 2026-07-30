@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://ai-brain.local/protocol/2026-07-29/protocol.schema.json",
+  "$id": "urn:body-adapter-protocol:2026-07-29",
   "title": "Body Adapter Protocol v1",
   "description": "Machine-readable contract for brain-to-body messaging. Source of truth over SPEC.md. Forward compatibility rule: schemas deliberately do NOT set additionalProperties:false; unknown fields MUST be accepted and ignored.",
   "$ref": "#/$defs/Envelope",

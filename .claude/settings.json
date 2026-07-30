@@ -43,7 +43,8 @@
       "Bash(echo \"ruff exit: $?\")",
       "Bash(echo \"fmt exit: $?\")",
       "Bash(uv add *)",
-      "Bash(python3 -c ' *)"
+      "Bash(python3 -c ' *)",
+      "Bash(echo \"\\(exit $?\\)\")"
     ],
     "deny": [
       "Bash(rm -rf *)",
