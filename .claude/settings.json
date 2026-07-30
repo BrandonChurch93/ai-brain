@@ -46,7 +46,8 @@
       "Bash(python3 -c ' *)",
       "Bash(echo \"\\(exit $?\\)\")",
       "Bash(gh --version)",
-      "Bash(python3 -c \"import json,sys; [print\\(' ', r['ref']\\) for r in json.load\\(sys.stdin\\)]\")"
+      "Bash(python3 -c \"import json,sys; [print\\(' ', r['ref']\\) for r in json.load\\(sys.stdin\\)]\")",
+      "Bash(PYTHONPATH=src uv run python -c ' *)"
     ],
     "deny": [
       "Bash(rm -rf *)",

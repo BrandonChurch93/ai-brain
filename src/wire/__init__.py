@@ -1,11 +1,53 @@
-"""The wire: envelope models, schema validation, and transport.
+"""The wire: envelope models, schema validation, and the boundary codec.
 
 `protocol/schemas/protocol.schema.json` is the source of truth for the
 format; this package loads it and validates against it rather than
 restating it (CLAUDE.md rule 3).
+
+Use `decode` and `encode`. They are the boundary: everything inbound and
+everything outbound is checked against the schema there.
 """
 
-from wire.envelope import Envelope, Timestamp
+from wire.codec import (
+    MalformedFrameError,
+    decode,
+    decode_object,
+    encode,
+    to_object,
+)
+from wire.models import (
+    ENVELOPE_BY_TYPE,
+    LATCHED_STATES,
+    MESSAGE_ADAPTER,
+    TERMINAL_STATUSES,
+    BaseEnvelope,
+    Capability,
+    CommandEnvelope,
+    CommandPayload,
+    CommandResultEnvelope,
+    CommandResultPayload,
+    ErrorEnvelope,
+    ErrorPayload,
+    EstopClearEnvelope,
+    EstopClearPayload,
+    EstopEnvelope,
+    EstopPayload,
+    EventEnvelope,
+    EventPayload,
+    HeartbeatEnvelope,
+    HeartbeatPayload,
+    HelloEnvelope,
+    HelloPayload,
+    ListCapabilitiesEnvelope,
+    Manifest,
+    ManifestEnvelope,
+    Message,
+    RejectEnvelope,
+    RejectPayload,
+    Timestamp,
+    WelcomeEnvelope,
+    WelcomePayload,
+)
 from wire.schema import (
     SUBPROTOCOL,
     SchemaNotFoundError,
@@ -24,18 +66,52 @@ from wire.validation import (
 )
 
 __all__ = [
+    "ENVELOPE_BY_TYPE",
+    "LATCHED_STATES",
+    "MESSAGE_ADAPTER",
     "SUBPROTOCOL",
-    "Envelope",
+    "TERMINAL_STATUSES",
+    "BaseEnvelope",
+    "Capability",
+    "CommandEnvelope",
+    "CommandPayload",
+    "CommandResultEnvelope",
+    "CommandResultPayload",
+    "ErrorEnvelope",
+    "ErrorPayload",
+    "EstopClearEnvelope",
+    "EstopClearPayload",
+    "EstopEnvelope",
+    "EstopPayload",
+    "EventEnvelope",
+    "EventPayload",
+    "HeartbeatEnvelope",
+    "HeartbeatPayload",
+    "HelloEnvelope",
+    "HelloPayload",
+    "ListCapabilitiesEnvelope",
+    "MalformedFrameError",
+    "Manifest",
+    "ManifestEnvelope",
+    "Message",
     "ProtocolValidationError",
+    "RejectEnvelope",
+    "RejectPayload",
     "SchemaNotFoundError",
     "Timestamp",
+    "WelcomeEnvelope",
+    "WelcomePayload",
     "capability_classes",
+    "decode",
+    "decode_object",
+    "encode",
     "is_valid",
     "iter_errors",
     "message_types",
     "protocol_schema",
     "schema_id",
     "schema_path",
+    "to_object",
     "validate_message",
     "validator",
 ]
