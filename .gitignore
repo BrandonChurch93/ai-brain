@@ -4,6 +4,12 @@
 # Python
 __pycache__/
 .venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Flight-recorder output and other local runtime state
+var/
 
 # Environment
 .env

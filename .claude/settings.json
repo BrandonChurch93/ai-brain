@@ -30,7 +30,18 @@
       "Bash(wc *)",
       "Bash(echo *)",
       "Bash(which *)",
-      "Bash(echo \"em-dash scan exit: $?\")"
+      "Bash(echo \"em-dash scan exit: $?\")",
+      "Bash(uv --version)",
+      "Read(//Users/brandonchurch/.local/bin/**)",
+      "Bash(brew --version)",
+      "Bash(brew install *)",
+      "Bash(uv init *)",
+      "Bash(uv python *)",
+      "Bash(uv sync *)",
+      "Bash(uv run *)",
+      "Bash(echo \"pytest exit: $?\")",
+      "Bash(echo \"ruff exit: $?\")",
+      "Bash(echo \"fmt exit: $?\")"
     ],
     "deny": [
       "Bash(rm -rf *)",
