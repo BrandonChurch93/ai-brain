@@ -9,9 +9,12 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from functools import cache
 from pathlib import Path
 from typing import Any
+
+_VERSION_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 SCHEMA_RELATIVE_PATH = Path("protocol/schemas/protocol.schema.json")
 
@@ -79,3 +82,28 @@ def capability_classes() -> frozenset[str]:
 def schema_id() -> str:
     """The schema's `$id`, which carries the version it was published under."""
     return protocol_schema()["$id"]
+
+
+@cache
+def protocol_version() -> str:
+    """The version string this schema publishes, e.g. `2026-07-29`.
+
+    Read off the `$id` rather than written down again, so the schema and the
+    version the brain negotiates with cannot disagree (SPEC section 5).
+    """
+    version = schema_id().rsplit(":", 1)[-1]
+    if not _VERSION_PATTERN.fullmatch(version):
+        raise SchemaNotFoundError(
+            f"schema $id {schema_id()!r} does not end in a YYYY-MM-DD version string"
+        )
+    return version
+
+
+@cache
+def supported_versions() -> tuple[str, ...]:
+    """Every version the brain accepts, newest first (SPEC section 9.3).
+
+    One entry today. A future breaking change adds the old version here and
+    keeps it until every body has migrated.
+    """
+    return (protocol_version(),)

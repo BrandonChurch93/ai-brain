@@ -6,6 +6,7 @@ requires-python = ">=3.12"
 dependencies = [
     "jsonschema[format-nongpl]>=4.23",
     "pydantic>=2.13",
+    "websockets>=17.0",
 ]
 
 [build-system]
@@ -20,6 +21,7 @@ dev = [
     "hypothesis>=6.164",
     "hypothesis-jsonschema>=0.23",
     "pytest>=8.3",
+    "pytest-asyncio>=1.4",
     "ruff>=0.8",
 ]
 
@@ -27,6 +29,8 @@ dev = [
 testpaths = ["tests"]
 pythonpath = ["src"]
 addopts = "-q --strict-markers"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 
 [tool.ruff]
 line-length = 100

@@ -47,7 +47,9 @@
       "Bash(echo \"\\(exit $?\\)\")",
       "Bash(gh --version)",
       "Bash(python3 -c \"import json,sys; [print\\(' ', r['ref']\\) for r in json.load\\(sys.stdin\\)]\")",
-      "Bash(PYTHONPATH=src uv run python -c ' *)"
+      "Bash(PYTHONPATH=src uv run python -c ' *)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('websockets latest:', d['info']['version']\\)\")",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('pytest-asyncio latest:', d['info']['version']\\)\")"
     ],
     "deny": [
       "Bash(rm -rf *)",
