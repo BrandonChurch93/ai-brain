@@ -28,7 +28,7 @@ References used throughout: CLAUDE.md (rules), STATE.md (V1 definition and accep
 - [x] 0.4 Schema loader: the `src/wire/` package loads `protocol/schemas/protocol.schema.json`, defines the envelope models, and exposes a validator. Recreate the fixture suite from Batch 2 review: 18 valid messages (full handshake, commands, results, E-stop, state events, unknown-future-fields message) and 9 invalid ones (missing ttl_ms, missing span_id, bad version format, missing session, bad status, empty estop reason, malformed body_id, unknown type, missing ts).
       refs: SPEC §4-6, schema file
       done: pytest asserts 18 pass and 9 fail, wired into the suite permanently.
-- [ ] 0.5 CI: GitHub Actions workflow running ruff and pytest on push.
+- [x] 0.5 CI: GitHub Actions workflow running ruff and pytest on push.
       done: first green run on GitHub.
 
 **Gate 0:** suite green in CI. Rewrite STATE.md (phase: building, Phase 0 complete). Commit.

@@ -6,14 +6,23 @@ Working title **ai-brain** (placeholder, ADR-0000).
 
 ## Phase
 
-Pre-build. Foundation documents complete and committed: ADRs 0000 through 0008 (all accepted), research survey, protocol SPEC and schema (validated against 27 message fixtures). Build has not started; no code exists yet.
+Building. Phase 0 of `BUILD-CHECKLIST.md` is complete: the project is scaffolded, the wire package loads and enforces the protocol schema, and CI is green on GitHub. Nothing talks to anything yet: there is no server, no body, no session. Phase 1 (session core) is next.
 
 ## What exists
 
+Documents:
+
 - `docs/adr/` · ADRs 0000 through 0008 plus template. All nine accepted.
 - `docs/research/middleware-survey.md` · prior-art survey, the ADR citation base
-- `protocol/SPEC.md` and `protocol/schemas/protocol.schema.json` · the brain-to-body contract, v1, version string `2026-07-29`
-- This file, `CLAUDE.md`, and a minimal `README.md` (working-title notice, description, license status)
+- `protocol/SPEC.md` and `protocol/schemas/protocol.schema.json` · the brain-to-body contract, v1, version string `2026-07-29`, schema id `urn:body-adapter-protocol:2026-07-29`
+- This file, `CLAUDE.md`, `BUILD-CHECKLIST.md`, and a minimal `README.md`
+
+Code:
+
+- Python 3.12 managed by `uv`, `ruff` and `pytest` configured, `src/` layout with `brain/`, `bodies/`, `wire/`. Distribution name is `brain`; no placeholder string appears anywhere in code (ADR-0000).
+- `src/wire/` · loads the schema and validates messages against it. Message types and capability classes are read out of the schema rather than restated, so they cannot drift. Validation errors are flattened to leaves, because the envelope dispatches on `type` through if/then subschemas and the unflattened error names no cause.
+- `tests/` · 39 tests. The permanent protocol fixture suite is 27 wire messages on disk: 18 the schema must accept (all 12 message types, both body shapes, the reserved `sys` state event, and a message from a hypothetical later schema carrying unknown fields) and 9 it must reject, each asserting the specific schema rule it exists to defend.
+- `.github/workflows/ci.yml` · ruff, format check, and pytest on every push. Green.
 
 ## V1 definition
 
@@ -36,6 +45,8 @@ Acceptance tests (the definition of done):
 - Replay yesterday's session from the MCAP log; decisions come out identical.
 - Make a backward-compatible protocol change; the un-updated body still works.
 
+None are green yet. Each needs machinery that does not exist: acceptance tests 1 and 2 need Phase 3 and Phase 5, test 3 needs Phase 2, test 4 needs Phase 7.
+
 Non-goals for V1: purchased hardware, navigation or SLAM, learned policies or VLA, wake word or full-duplex voice, fleet features, MQTT or Zenoh, any dashboard beyond basic telemetry. Each has a designed seam; none belongs in the foundation.
 
 ## Open decisions
@@ -44,5 +55,4 @@ Non-goals for V1: purchased hardware, navigation or SLAM, learned policies or VL
 
 ## Next
 
-1. Resolve the open decision above.
-2. Continue Phase 0 of `BUILD-CHECKLIST.md` at step 0.3.
+Phase 1 of `BUILD-CHECKLIST.md`, the session core: pydantic envelope models, the WebSocket server with handshake and version negotiation, the session registry, and the brain-side heartbeat lease.
