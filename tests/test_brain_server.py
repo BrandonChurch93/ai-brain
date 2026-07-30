@@ -7,6 +7,7 @@ supported list, wrong subprotocol is refused at the upgrade.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
 from typing import Any
@@ -16,9 +17,9 @@ import websockets
 from websockets.asyncio.client import connect
 
 from brain.config import ServerConfig
-from brain.registry import SeqStatus
+from brain.registry import BODY_LOST, SeqStatus
 from brain.server import BrainServer
-from wire import SUBPROTOCOL, decode
+from wire import SUBPROTOCOL, decode, decode_object
 from wire.schema import protocol_version
 
 TOKEN = "test-token"
@@ -332,3 +333,137 @@ async def _tick() -> None:
     import asyncio
 
     await asyncio.sleep(0.005)
+
+
+# Step 1.4 done-check: a client that goes silent.
+
+FAST = ServerConfig(
+    host="127.0.0.1",
+    port=0,
+    auth_token=TOKEN,
+    heartbeat_interval_ms=100,
+    heartbeat_lease_ms=300,
+)
+
+
+async def test_the_brain_sends_heartbeats_on_the_interval() -> None:
+    async with BrainServer(FAST) as running:
+        url = f"ws://127.0.0.1:{running.port}"
+        async with connect(url, subprotocols=[SUBPROTOCOL]) as client:  # type: ignore[list-item]
+            await client.send(hello_frame())
+            assert decode(await client.recv()).type == "welcome"
+
+            beats = [decode(await client.recv()) for _ in range(3)]
+
+    assert [beat.type for beat in beats] == ["heartbeat"] * 3
+    assert {beat.payload.state for beat in beats} == {"active"}
+    # welcome was seq 1, so the beats continue from 2 without repeating it.
+    assert [beat.seq for beat in beats] == [2, 3, 4]
+
+
+async def test_brain_heartbeats_report_degraded_when_the_brain_is() -> None:
+    """SPEC section 8.5: this is the only way DEGRADED reaches a body."""
+    async with BrainServer(FAST) as running:
+        running.brain_state = "degraded"
+        url = f"ws://127.0.0.1:{running.port}"
+        async with connect(url, subprotocols=[SUBPROTOCOL]) as client:  # type: ignore[list-item]
+            await client.send(hello_frame())
+            await client.recv()
+            assert decode(await client.recv()).payload.state == "degraded"
+
+
+async def test_a_silent_body_is_marked_lost_within_the_lease() -> None:
+    """The done-check for step 1.4. The client connects, completes the
+    handshake, then says nothing at all."""
+    lost: list[Any] = []
+
+    async def on_lost(state: Any, outcomes: Any) -> None:
+        lost.append((state.session, outcomes))
+
+    async with BrainServer(FAST, on_lost=on_lost) as running:
+        url = f"ws://127.0.0.1:{running.port}"
+        async with connect(url, subprotocols=[SUBPROTOCOL]) as client:  # type: ignore[list-item]
+            await client.send(hello_frame())
+            welcome = decode(await client.recv())
+
+            deadline = 3.0
+            waited = 0.0
+            while not lost and waited < deadline:
+                await _tick()
+                waited += 0.005
+
+            assert lost, f"body not marked LOST within {deadline}s"
+            session, _ = lost[0]
+            assert session == welcome.session
+
+            record = running.registry.get(welcome.session)
+            assert record is not None
+            assert record.lost
+
+
+async def test_a_body_that_keeps_heartbeating_is_never_lost() -> None:
+    lost: list[Any] = []
+
+    async def on_lost(state: Any, outcomes: Any) -> None:
+        lost.append(state.session)
+
+    async with BrainServer(FAST, on_lost=on_lost) as running:
+        url = f"ws://127.0.0.1:{running.port}"
+        async with connect(url, subprotocols=[SUBPROTOCOL]) as client:  # type: ignore[list-item]
+            await client.send(hello_frame())
+            welcome = decode(await client.recv())
+
+            for seq in range(2, 12):
+                await client.send(heartbeat_frame(welcome.session, seq))
+                await asyncio.sleep(0.05)
+
+            record = running.registry.get(welcome.session)
+            assert record is not None
+            assert not record.lost
+
+    assert not lost
+
+
+async def test_outstanding_spans_fail_when_the_body_is_lost() -> None:
+    """SPEC section 8.1: nothing upstream should wait forever on a result
+    that is never coming."""
+    lost: list[Any] = []
+
+    async def on_lost(state: Any, outcomes: Any) -> None:
+        lost.append(outcomes)
+
+    async with BrainServer(FAST, on_lost=on_lost) as running:
+        url = f"ws://127.0.0.1:{running.port}"
+        async with connect(url, subprotocols=[SUBPROTOCOL]) as client:  # type: ignore[list-item]
+            await client.send(hello_frame())
+            welcome = decode(await client.recv())
+
+            command = decode_object(
+                {
+                    "type": "command",
+                    "id": "01JZQK8N4T00000000000000K1",
+                    "session": welcome.session,
+                    "seq": 2,
+                    "ts": {"mono_ns": 1, "utc": "2026-07-29T18:00:00.000Z"},
+                    "trace_id": "trc_patrol",
+                    "span_id": "spn_in_flight",
+                    "payload": {
+                        "capability": "sys",
+                        "action": "ping",
+                        "params": {},
+                        "ttl_ms": 5000,
+                    },
+                }
+            )
+            running.registry.open_span(welcome.session, command)  # type: ignore[arg-type]
+
+            waited = 0.0
+            while not lost and waited < 3.0:
+                await _tick()
+                waited += 0.005
+
+            assert lost, "body never marked LOST"
+            outcomes = lost[0]
+            assert [outcome.span.span_id for outcome in outcomes] == ["spn_in_flight"]
+            assert outcomes[0].status == "failed"
+            assert outcomes[0].code == BODY_LOST

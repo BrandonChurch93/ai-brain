@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError
@@ -24,9 +25,11 @@ from websockets.asyncio.server import Server, ServerConnection, serve
 
 from brain.config import ServerConfig
 from brain.handshake import Accepted, Refused, is_hello, malformed_hello, open_session
-from brain.registry import Reception, SessionRecord, SessionRegistry
+from brain.heartbeat import BrainState, LeaseWatch, heartbeat_loop
+from brain.registry import Reception, SessionRecord, SessionRegistry, SpanOutcome
 from wire import (
     SUBPROTOCOL,
+    HeartbeatEnvelope,
     MalformedFrameError,
     Message,
     ProtocolValidationError,
@@ -41,6 +44,10 @@ log = logging.getLogger("brain.server")
 #: the handshake, carrying the brain's own t_received and what the sequence
 #: number said about it.
 MessageHandler = Callable[["SessionState", Reception], Awaitable[None]]
+
+#: Called when a body's heartbeat lease expires, with the spans the brain
+#: gave up on as a result.
+LostHandler = Callable[["SessionState", list[SpanOutcome]], Awaitable[None]]
 
 
 def _server_version() -> str:
@@ -60,6 +67,9 @@ class SessionState:
 
     record: SessionRecord
     connection: ServerConnection
+    #: Timing lives here rather than on the record, so the registry stays
+    #: pure bookkeeping.
+    lease: LeaseWatch | None = None
 
     @property
     def session(self) -> str:
@@ -89,12 +99,30 @@ class BrainServer:
         config: ServerConfig,
         *,
         on_message: MessageHandler | None = None,
+        on_lost: LostHandler | None = None,
+        clock: Callable[[], int] = time.monotonic_ns,
     ) -> None:
         self._config = config
         self._on_message = on_message
+        self._on_lost = on_lost
+        self._clock = clock
         self._server: Server | None = None
         self._registry = SessionRegistry()
         self._sessions: dict[str, SessionState] = {}
+        self._brain_state: BrainState = "active"
+
+    @property
+    def brain_state(self) -> BrainState:
+        """What the brain reports about itself in its heartbeats.
+
+        `active` or `degraded` (SPEC section 6.4). The FSM that drives this
+        properly is checklist step 5.4; for now it is settable.
+        """
+        return self._brain_state
+
+    @brain_state.setter
+    def brain_state(self, value: BrainState) -> None:
+        self._brain_state = value
 
     @property
     def sessions(self) -> dict[str, SessionState]:
@@ -148,12 +176,45 @@ class BrainServer:
             state.protocol_version,
         )
 
+        beating = asyncio.create_task(self._beat(state))
         try:
             await self._steady_state(state)
         finally:
+            beating.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await beating
             self._sessions.pop(state.session, None)
             self._registry.close(state.session)
             log.info("session %s closed", state.session)
+
+    async def _beat(self, state: SessionState) -> None:
+        """Send heartbeats and watch this body's lease (SPEC section 8.1)."""
+        assert state.lease is not None
+
+        async def send(message: HeartbeatEnvelope) -> None:
+            await state.connection.send(encode(message))
+
+        async def lost(silent_ms: float) -> None:
+            outcomes = self._registry.mark_lost(
+                state.session,
+                message=f"no heartbeat for {silent_ms:.0f}ms; body considered lost",
+            )
+            if self._on_lost is not None:
+                await self._on_lost(state, outcomes)
+
+        async def recovered() -> None:
+            self._registry.mark_live(state.session)
+
+        await heartbeat_loop(
+            session=state.session,
+            interval_ms=self._config.heartbeat_interval_ms,
+            watch=state.lease,
+            seq=state.record.outbound,
+            send=send,
+            brain_state=lambda: self._brain_state,
+            on_lost=lost,
+            on_recovered=recovered,
+        )
 
     async def _open(self, connection: ServerConnection, seq: SeqCounter) -> SessionState | None:
         """Run the handshake. Returns None if the body was rejected."""
@@ -195,7 +256,11 @@ class BrainServer:
             first_seq=outcome.first_seq,
             outbound=seq,
         )
-        return SessionState(record=record, connection=connection)
+        return SessionState(
+            record=record,
+            connection=connection,
+            lease=LeaseWatch(self._config.heartbeat_lease_ms, self._clock),
+        )
 
     async def _refuse(self, connection: ServerConnection, refused: Refused) -> None:
         log.info("rejecting body: %s (%s)", refused.reason, refused.reject.payload.code)
@@ -217,6 +282,13 @@ class BrainServer:
                 except (MalformedFrameError, ProtocolValidationError) as exc:
                     log.warning("session %s sent an invalid message: %s", state.session, exc)
                     continue
+
+                # SPEC section 8.1 words the lease in terms of heartbeats,
+                # not traffic in general, so only a heartbeat renews it. A
+                # body streaming frames while its heartbeat thread is wedged
+                # is exactly the failure this is meant to catch.
+                if isinstance(message, HeartbeatEnvelope) and state.lease is not None:
+                    state.lease.beat()
 
                 reception = self._registry.receive(state.session, message, t_received)
 
