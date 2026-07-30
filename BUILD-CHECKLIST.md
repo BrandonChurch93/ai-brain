@@ -137,7 +137,7 @@ References used throughout: CLAUDE.md (rules), STATE.md (V1 definition and accep
 - [ ] 7.2 Full deterministic replay pass over a real (not synthetic) session including LLM decisions.
       refs: ADR-0005
       done: acceptance test 3 green on a genuine session.
-- [ ] 7.3 README for the public repo (working-title notice, what this is, architecture sketch, how to run the demo); STATE.md rewritten to V1-complete; ADR sweep for any drift between records and reality.
+- [ ] 7.3 README for the public repo (working-title notice, what this is, architecture sketch, how to run the demo); STATE.md rewritten to V1-complete; ADR sweep for any drift between records and reality. Revisit schema packaging as package data: v1 finds `protocol/schemas/` by walking up from the installed module, with `BRAIN_PROTOCOL_SCHEMA` as the override, which works from a checkout but not from a wheel installed away from the repo tree.
       done: fresh-instance test: a new Claude Code session, given only the repo, correctly explains the system and runs the test suite.
 
 **Done:** all four acceptance tests in STATE.md green. V1 exists.
