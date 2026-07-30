@@ -44,7 +44,8 @@
       "Bash(echo \"fmt exit: $?\")",
       "Bash(uv add *)",
       "Bash(python3 -c ' *)",
-      "Bash(echo \"\\(exit $?\\)\")"
+      "Bash(echo \"\\(exit $?\\)\")",
+      "Bash(gh --version)"
     ],
     "deny": [
       "Bash(rm -rf *)",

@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v9
+        with:
+          enable-cache: true
+
+      # Reads .python-version, so CI and the laptop run the same interpreter.
+      - name: Install Python
+        run: uv python install
+
+      # --locked fails rather than silently resolving, so a pyproject edit
+      # that never made it into uv.lock is caught here and not in Phase 5.
+      - name: Sync dependencies
+        run: uv sync --locked
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Format
+        run: uv run ruff format --check src tests
+
+      - name: Tests
+        run: uv run pytest
