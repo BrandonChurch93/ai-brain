@@ -29,6 +29,22 @@ jobs:
       - name: Sync dependencies
         run: uv sync --locked
 
+      # An independent verifier for the MCAP files we write. It found a
+      # log_time bug the test suite passed clean over, so it runs here rather
+      # than only on somebody's laptop.
+      - name: Install the mcap CLI
+        env:
+          MCAP_CLI_VERSION: v0.3.0
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/bin/mcap" \
+            "https://github.com/foxglove/mcap/releases/download/releases/mcap-cli/${MCAP_CLI_VERSION}/mcap-linux-amd64"
+          chmod +x "$RUNNER_TEMP/bin/mcap"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: Check the mcap CLI is usable
+        run: mcap --version
+
       - name: Lint
         run: uv run ruff check .
 
@@ -36,4 +52,8 @@ jobs:
         run: uv run ruff format --check src tests
 
       - name: Tests
+        env:
+          # Turns "mcap CLI missing, skipping" into a failure. A conformance
+          # check that silently skips in CI is not a check.
+          BRAIN_REQUIRE_MCAP_CLI: "1"
         run: uv run pytest

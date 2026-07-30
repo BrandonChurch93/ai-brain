@@ -56,7 +56,10 @@
       "Bash(mcap version *)",
       "Bash(mcap info *)",
       "Bash(mcap cat *)",
-      "Bash(mcap doctor *)"
+      "Bash(mcap doctor *)",
+      "Bash(echo \"garbage\")",
+      "Bash(PATH=\"/usr/bin:/bin\" BRAIN_REQUIRE_MCAP_CLI=1 uv run pytest tests/test_mcap_cli_conformance.py::test_doctor_finds_nothing_wrong)",
+      "Bash(BRAIN_REQUIRE_MCAP_CLI=1 BRAIN_FAKE_PATH=1 uv run env PATH=\"/usr/bin:/bin\" python -m pytest tests/test_mcap_cli_conformance.py::test_doctor_finds_nothing_wrong)"
     ],
     "deny": [
       "Bash(rm -rf *)",
