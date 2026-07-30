@@ -14,7 +14,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: astral-sh/setup-uv@v9
+      # Exact version, not @v9: this action publishes no floating major tag,
+      # so @v9 is unresolvable and the job dies before checkout.
+      - uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
 
