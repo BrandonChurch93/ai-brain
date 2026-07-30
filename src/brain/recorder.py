@@ -45,8 +45,17 @@ SESSION_META_SCHEMA: dict[str, Any] = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "title": "Session metadata",
     "type": "object",
-    "required": ["session", "body_id", "protocol_version", "schema_id", "manifest", "opened_utc"],
+    "required": [
+        "index",
+        "session",
+        "body_id",
+        "protocol_version",
+        "schema_id",
+        "manifest",
+        "opened_utc",
+    ],
     "properties": {
+        "index": {"type": "integer", "description": "File-wide write order."},
         "session": {"type": "string"},
         "body_id": {"type": "string"},
         "protocol_version": {"type": "string"},
@@ -202,7 +211,10 @@ class FlightRecorder:
         (ADR-0005 point 2 and 3).
         """
         captured = message.ts
-        stamp = t_received if t_received is not None else (now() if direction == "rx" else captured)
+
+        # Inbound traffic was received; outbound traffic was not, and
+        # inventing a t_received for it would be a lie in the log.
+        received = (t_received if t_received is not None else now()) if direction == "rx" else None
 
         record: dict[str, Any] = {
             "direction": direction,
@@ -213,18 +225,24 @@ class FlightRecorder:
             "trace_id": message.trace_id,
             "span_id": message.span_id,
             "t_captured": {"mono_ns": captured.mono_ns, "utc": captured.utc},
-            "t_received": {"mono_ns": stamp.mono_ns, "utc": stamp.utc}
-            if direction == "rx"
+            "t_received": {"mono_ns": received.mono_ns, "utc": received.utc}
+            if received is not None
             else None,
             "message": to_object(message),
         }
 
+        # log_time is when this recorder wrote the record, publish_time is
+        # when the sender created the message. Using the message's own stamp
+        # as log_time looks equivalent for freshly sent traffic and is not:
+        # recording anything built earlier walks log_time backwards, which
+        # `mcap doctor` rightly complains about and which breaks the time
+        # index readers rely on.
+        logged = received if received is not None else now()
+
         self._write(
             topic_for(message.type),
             record,
-            # log_time is when this recorder saw it, publish_time is when the
-            # sender made it. For outbound traffic those are the same event.
-            log_time=epoch_ns(stamp),
+            log_time=epoch_ns(logged),
             publish_time=epoch_ns(captured),
         )
 
@@ -246,6 +264,14 @@ class FlightRecorder:
         sequence = self._sequence.get(topic, 0) + 1
         self._sequence[topic] = sequence
 
+        # A file-wide write order, so replay reconstructs the exact sequence.
+        # log_time cannot carry that on its own: it comes from an ISO
+        # timestamp with microsecond resolution, and two records written
+        # inside the same microsecond would be indistinguishable. Replay
+        # being deterministic is the whole point of ADR-0005.
+        self._count += 1
+        record = {"index": self._count, **record}
+
         self._writer.add_message(
             channel_id=channel,
             log_time=log_time,
@@ -253,4 +279,3 @@ class FlightRecorder:
             sequence=sequence,
             data=json.dumps(record, separators=(",", ":")).encode("utf-8"),
         )
-        self._count += 1

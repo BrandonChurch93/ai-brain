@@ -55,7 +55,8 @@
       "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('mcap latest:', d['info']['version']\\)\")",
       "Bash(mcap version *)",
       "Bash(mcap info *)",
-      "Bash(mcap cat *)"
+      "Bash(mcap cat *)",
+      "Bash(mcap doctor *)"
     ],
     "deny": [
       "Bash(rm -rf *)",

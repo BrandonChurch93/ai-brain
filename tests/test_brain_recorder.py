@@ -238,6 +238,32 @@ def test_mcap_timestamps_are_epoch_nanoseconds(recorded: Path) -> None:
     assert stamps[0][0] > 1_700_000_000_000_000_000  # a plausible epoch, not a mono origin
 
 
+def test_log_time_never_goes_backwards(tmp_path: Path) -> None:
+    """MCAP builds a time index on log_time, and `mcap doctor` refuses a file
+    where it decreases. Recording a message built earlier (an old fixture, a
+    replayed frame) must not walk the clock back: log_time is when this
+    recorder wrote the record, not when the sender made the message."""
+    path = tmp_path / "ordering.mcap"
+
+    with FlightRecorder(path) as recorder:
+        # Timestamps deliberately descending, and far in the past.
+        for seq in (9, 5, 2):
+            recorder.record("tx", heartbeat(seq), session="sess_1")
+
+    with path.open("rb") as handle:
+        stamps = [
+            (message.log_time, message.publish_time)
+            for _schema, _channel, message in make_reader(handle).iter_messages()
+        ]
+
+    log_times = [log_time for log_time, _ in stamps]
+    assert log_times == sorted(log_times)
+
+    # publish_time still reflects the message's own stamp, descending.
+    publish_times = [publish for _, publish in stamps]
+    assert publish_times != sorted(publish_times)
+
+
 def test_sequence_numbers_are_per_channel(recorded: Path) -> None:
     with recorded.open("rb") as handle:
         beats = [
