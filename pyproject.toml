@@ -5,6 +5,7 @@ description = "Shared robot brain: planning, perception, memory, safety, telemet
 requires-python = ">=3.12"
 dependencies = [
     "jsonschema[format-nongpl]>=4.23",
+    "mcap>=1.4",
     "pydantic>=2.13",
     "websockets>=17.0",
 ]

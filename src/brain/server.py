@@ -26,6 +26,7 @@ from websockets.asyncio.server import Server, ServerConnection, serve
 from brain.config import ServerConfig
 from brain.handshake import Accepted, Refused, is_hello, malformed_hello, open_session
 from brain.heartbeat import BrainState, LeaseWatch, heartbeat_loop
+from brain.recorder import FlightRecorder
 from brain.registry import Reception, SessionRecord, SessionRegistry, SpanOutcome
 from wire import (
     SUBPROTOCOL,
@@ -100,11 +101,13 @@ class BrainServer:
         *,
         on_message: MessageHandler | None = None,
         on_lost: LostHandler | None = None,
+        recorder: FlightRecorder | None = None,
         clock: Callable[[], int] = time.monotonic_ns,
     ) -> None:
         self._config = config
         self._on_message = on_message
         self._on_lost = on_lost
+        self._recorder = recorder
         self._clock = clock
         self._server: Server | None = None
         self._registry = SessionRegistry()
@@ -193,6 +196,7 @@ class BrainServer:
 
         async def send(message: HeartbeatEnvelope) -> None:
             await state.connection.send(encode(message))
+            self._record("tx", message, session=state.session, body_id=state.body_id)
 
         async def lost(silent_ms: float) -> None:
             outcomes = self._registry.mark_lost(
@@ -248,6 +252,19 @@ class BrainServer:
         assert isinstance(outcome, Accepted)
         await connection.send(encode(outcome.welcome))
 
+        if self._recorder is not None:
+            self._recorder.record_session(
+                session=outcome.session,
+                body_id=outcome.body_id,
+                protocol_version=outcome.protocol_version,
+                manifest=outcome.manifest,
+            )
+            # hello arrived before the session existed, so it is recorded
+            # here rather than in the receive loop. Leaving it out would
+            # lose the manifest exchange the session was built on.
+            self._record("rx", first, session=outcome.session, body_id=outcome.body_id)
+            self._record("tx", outcome.welcome, session=outcome.session, body_id=outcome.body_id)
+
         record = self._registry.open(
             session=outcome.session,
             body_id=outcome.body_id,
@@ -264,10 +281,38 @@ class BrainServer:
 
     async def _refuse(self, connection: ServerConnection, refused: Refused) -> None:
         log.info("rejecting body: %s (%s)", refused.reason, refused.reject.payload.code)
+        self._record("tx", refused.reject)
         with contextlib.suppress(websockets.exceptions.ConnectionClosed):
             await connection.send(encode(refused.reject))
             await connection.close()
         return None
+
+    def _record(
+        self,
+        direction: str,
+        message: Message,
+        *,
+        session: str | None = None,
+        body_id: str | None = None,
+        t_received: object = None,
+    ) -> None:
+        """Record if there is a recorder, and never let logging break the run.
+
+        A flight recorder that can take the aircraft down is worse than no
+        flight recorder (ADR-0005).
+        """
+        if self._recorder is None:
+            return
+        try:
+            self._recorder.record(
+                direction,  # type: ignore[arg-type]
+                message,
+                session=session,
+                body_id=body_id,
+                t_received=t_received,  # type: ignore[arg-type]
+            )
+        except Exception:
+            log.exception("failed to record a %s %s message", direction, message.type)
 
     async def _steady_state(self, state: SessionState) -> None:
         """Receive, stamp, record, dispatch. Heartbeats arrive in step 1.4."""
@@ -291,6 +336,13 @@ class BrainServer:
                     state.lease.beat()
 
                 reception = self._registry.receive(state.session, message, t_received)
+                self._record(
+                    "rx",
+                    message,
+                    session=state.session,
+                    body_id=state.body_id,
+                    t_received=t_received,
+                )
 
                 if self._on_message is not None:
                     await self._on_message(state, reception)

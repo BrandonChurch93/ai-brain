@@ -8,9 +8,13 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
+
+#: Where MCAP sessions land. Gitignored; nothing here is source.
+DEFAULT_LOG_DIR = Path("./var/logs")
 
 # Heartbeat defaults the brain hands each body in `welcome` (SPEC section 6.2).
 # The lease is three intervals: one missed heartbeat is a hiccup, three is a
@@ -34,6 +38,7 @@ class ServerConfig:
     heartbeat_interval_ms: int = DEFAULT_HEARTBEAT_INTERVAL_MS
     heartbeat_lease_ms: int = DEFAULT_HEARTBEAT_LEASE_MS
     handshake_timeout_s: float = DEFAULT_HANDSHAKE_TIMEOUT_S
+    log_dir: Path = DEFAULT_LOG_DIR
 
     def __post_init__(self) -> None:
         if self.heartbeat_lease_ms <= self.heartbeat_interval_ms:
@@ -55,7 +60,12 @@ class ServerConfig:
                 source, "BRAIN_HEARTBEAT_INTERVAL_MS", DEFAULT_HEARTBEAT_INTERVAL_MS
             ),
             heartbeat_lease_ms=_int(source, "BRAIN_HEARTBEAT_LEASE_MS", DEFAULT_HEARTBEAT_LEASE_MS),
+            log_dir=Path(source.get("BRAIN_LOG_DIR") or DEFAULT_LOG_DIR),
         )
+
+    def session_path(self, session: str, body_id: str) -> Path:
+        """Where one session's MCAP file goes."""
+        return self.log_dir / f"{body_id}-{session}.mcap"
 
 
 def _int(source: dict[str, str] | os._Environ[str], name: str, default: int) -> int:

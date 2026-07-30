@@ -52,7 +52,7 @@ References used throughout: CLAUDE.md (rules), STATE.md (V1 definition and accep
 
 ## Phase 2 · Flight recorder
 
-- [ ] 2.1 MCAP writer: one channel per message type plus a `session_meta` channel (negotiated version, manifest); every rx/tx message logged with dual timestamps, seq, trace_id, span_id.
+- [x] 2.1 MCAP writer: one channel per message type plus a `session_meta` channel (negotiated version, manifest); every rx/tx message logged with dual timestamps, seq, trace_id, span_id.
       refs: ADR-0005; SPEC §4
       done: recorded file opens in Foxglove or the `mcap` CLI; channel count and message counts assert in a test.
 - [ ] 2.2 Replay reader: load a session file, reconstruct the ordered message sequence, re-feed programmatically.

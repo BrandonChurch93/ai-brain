@@ -40,6 +40,19 @@ def now() -> Timestamp:
     )
 
 
+def epoch_ns(stamp: Timestamp) -> int:
+    """`stamp.utc` as nanoseconds since the epoch.
+
+    The flight recorder needs one timeline that means the same thing on
+    every device. `mono_ns` cannot be it: monotonic clocks count from an
+    arbitrary per-machine origin, so a body's and the brain's are not
+    comparable. The wall clock is comparable, skewed by tens of
+    milliseconds, and that is the trade MCAP timestamps want (ADR-0005).
+    `mono_ns` is kept alongside for exact ordering within one device.
+    """
+    return int(datetime.fromisoformat(stamp.utc).timestamp() * 1_000_000_000)
+
+
 class SeqCounter:
     """Per-sender counter: starts at 1, increments by 1 per message sent,
     resets per connection (SPEC section 4)."""

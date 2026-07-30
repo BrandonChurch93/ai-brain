@@ -10,13 +10,16 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Any
 
 import pytest
 import websockets
+from mcap.reader import make_reader
 from websockets.asyncio.client import connect
 
 from brain.config import ServerConfig
+from brain.recorder import FlightRecorder
 from brain.registry import BODY_LOST, SeqStatus
 from brain.server import BrainServer
 from wire import SUBPROTOCOL, decode, decode_object
@@ -333,6 +336,86 @@ async def _tick() -> None:
     import asyncio
 
     await asyncio.sleep(0.005)
+
+
+async def test_a_live_session_is_recorded_in_both_directions(tmp_path: Path) -> None:
+    """The handshake itself must land in the log. hello arrives before the
+    session exists, so it is easy to lose, and losing it would mean the file
+    no longer shows the manifest the session was built on."""
+    path = tmp_path / "session.mcap"
+
+    with FlightRecorder(path) as recorder:
+        config = ServerConfig(host="127.0.0.1", port=0, auth_token=TOKEN)
+        async with BrainServer(config, recorder=recorder) as running:
+            url = f"ws://127.0.0.1:{running.port}"
+            async with connect(url, subprotocols=[SUBPROTOCOL]) as client:  # type: ignore[list-item]
+                await client.send(hello_frame())
+                welcome = decode(await client.recv())
+                await client.send(heartbeat_frame(welcome.session, 2))
+
+                for _ in range(200):
+                    if recorder.message_count >= 4:
+                        break
+                    await _tick()
+
+    with path.open("rb") as handle:
+        records = [
+            (channel.topic, json.loads(message.data))
+            for _schema, channel, message in make_reader(handle).iter_messages()
+        ]
+
+    by_topic = {topic for topic, _ in records}
+    assert {"/session_meta", "/hello", "/welcome", "/heartbeat"} <= by_topic
+
+    hello = next(record for topic, record in records if topic == "/hello")
+    assert hello["direction"] == "rx"
+    assert hello["message"]["payload"]["manifest"]["body_id"] == "mock-01"
+
+    sent = next(record for topic, record in records if topic == "/welcome")
+    assert sent["direction"] == "tx"
+    assert sent["t_received"] is None
+
+    beat = next(record for topic, record in records if topic == "/heartbeat")
+    assert beat["t_received"] is not None
+
+
+async def test_a_rejected_body_is_still_recorded(tmp_path: Path) -> None:
+    """A refused handshake is exactly the kind of thing you want in the log."""
+    path = tmp_path / "rejected.mcap"
+
+    with FlightRecorder(path) as recorder:
+        config = ServerConfig(host="127.0.0.1", port=0, auth_token=TOKEN)
+        async with BrainServer(config, recorder=recorder) as running:
+            url = f"ws://127.0.0.1:{running.port}"
+            async with connect(url, subprotocols=[SUBPROTOCOL]) as client:  # type: ignore[list-item]
+                await client.send(hello_frame(token="wrong"))
+                assert decode(await client.recv()).type == "reject"
+
+    with path.open("rb") as handle:
+        topics = [
+            channel.topic for _schema, channel, _message in make_reader(handle).iter_messages()
+        ]
+    assert topics == ["/reject"]
+
+
+async def test_a_recorder_failure_does_not_take_the_session_down() -> None:
+    """A flight recorder that can crash the aircraft is worse than none."""
+
+    class BrokenRecorder(FlightRecorder):
+        def record(self, *args: Any, **kwargs: Any) -> None:
+            raise OSError("disk went away")
+
+        def record_session(self, *args: Any, **kwargs: Any) -> None:
+            raise OSError("disk went away")
+
+    broken = BrokenRecorder("/dev/null/never-used.mcap")
+    config = ServerConfig(host="127.0.0.1", port=0, auth_token=TOKEN)
+
+    async with BrainServer(config, recorder=broken) as running:
+        url = f"ws://127.0.0.1:{running.port}"
+        async with connect(url, subprotocols=[SUBPROTOCOL]) as client:  # type: ignore[list-item]
+            await client.send(hello_frame())
+            assert decode(await client.recv()).type == "welcome"
 
 
 # Step 1.4 done-check: a client that goes silent.
