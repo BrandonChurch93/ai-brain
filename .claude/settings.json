@@ -29,7 +29,8 @@
       "Bash(shasum *)",
       "Bash(wc *)",
       "Bash(echo *)",
-      "Bash(which *)"
+      "Bash(which *)",
+      "Bash(echo \"em-dash scan exit: $?\")"
     ],
     "deny": [
       "Bash(rm -rf *)",

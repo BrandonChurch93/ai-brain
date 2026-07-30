@@ -19,7 +19,7 @@ References used throughout: CLAUDE.md (rules), STATE.md (V1 definition and accep
 - [x] 0.1 🔶 Ratify ADR-0008 (Python core). Brandon flips Status to Accepted, or vetoes and this checklist's tooling steps get rewritten.
       refs: docs/adr/0008-python-core.md
       done: ADR-0008 Status is Accepted and committed.
-- [ ] 0.2 🔶 License decision. Repo is public; pick a license or explicitly record "no license yet" in STATE.md open decisions.
+- [x] 0.2 🔶 License decision. Repo is public; pick a license or explicitly record "no license yet" in STATE.md open decisions.
       refs: STATE.md
       done: LICENSE file committed, or STATE.md records the deliberate deferral.
 - [ ] 0.3 Scaffold: `uv init`, Python 3.12, `src/` layout with packages `brain/`, `bodies/`, `wire/`; `ruff` and `pytest` configured; `.env.example` with `BRAIN_` variables only.

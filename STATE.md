@@ -13,7 +13,7 @@ Pre-build. Foundation documents complete and committed: ADRs 0000 through 0008 (
 - `docs/adr/` · ADRs 0000 through 0008 plus template. All nine accepted.
 - `docs/research/middleware-survey.md` · prior-art survey, the ADR citation base
 - `protocol/SPEC.md` and `protocol/schemas/protocol.schema.json` · the brain-to-body contract, v1, version string `2026-07-29`
-- This file and `CLAUDE.md`
+- This file, `CLAUDE.md`, and a minimal `README.md` (working-title notice, description, license status)
 
 ## V1 definition
 
@@ -40,7 +40,7 @@ Non-goals for V1: purchased hardware, navigation or SLAM, learned policies or VL
 
 ## Open decisions
 
-- 🔶 Repository license. Checklist step 0.2.
+- License (deliberately deferred at step 0.2; decide by V1 complete, expected shape is an open protocol with core licensing decided separately, will get its own ADR).
 
 ## Next
 
