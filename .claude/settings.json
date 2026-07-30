@@ -49,7 +49,8 @@
       "Bash(python3 -c \"import json,sys; [print\\(' ', r['ref']\\) for r in json.load\\(sys.stdin\\)]\")",
       "Bash(PYTHONPATH=src uv run python -c ' *)",
       "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('websockets latest:', d['info']['version']\\)\")",
-      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('pytest-asyncio latest:', d['info']['version']\\)\")"
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('pytest-asyncio latest:', d['info']['version']\\)\")",
+      "Bash(sed -i '' 's/^- \\\\[ \\\\] 1\\\\.2 WebSocket server/- [x] 1.2 WebSocket server/' BUILD-CHECKLIST.md)"
     ],
     "deny": [
       "Bash(rm -rf *)",
