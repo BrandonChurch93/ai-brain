@@ -1,16 +1,16 @@
 # STATE.md
 
-Last rewritten: 2026-07-29. Rewrite this file whole when reality changes; never append history to it.
+Last rewritten: 2026-07-30. Rewrite this file whole when reality changes; never append history to it.
 
 Working title **ai-brain** (placeholder, ADR-0000).
 
 ## Phase
 
-Pre-build. Foundation documents complete and committed: ADRs 0000 through 0008 (eight accepted plus 0008 proposed, ratification is checklist step 0.1), research survey, protocol SPEC and schema (validated against 27 message fixtures). Build has not started; no code exists yet.
+Pre-build. Foundation documents complete and committed: ADRs 0000 through 0008 (all accepted), research survey, protocol SPEC and schema (validated against 27 message fixtures). Build has not started; no code exists yet.
 
 ## What exists
 
-- `docs/adr/` · ADRs 0000 through 0008 plus template. Eight accepted; 0008 is proposed, ratification is checklist step 0.1.
+- `docs/adr/` · ADRs 0000 through 0008 plus template. All nine accepted.
 - `docs/research/middleware-survey.md` · prior-art survey, the ADR citation base
 - `protocol/SPEC.md` and `protocol/schemas/protocol.schema.json` · the brain-to-body contract, v1, version string `2026-07-29`
 - This file and `CLAUDE.md`
@@ -40,10 +40,9 @@ Non-goals for V1: purchased hardware, navigation or SLAM, learned policies or VL
 
 ## Open decisions
 
-- 🔶 Ratify ADR-0008 (Python core for V1). Checklist step 0.1.
 - 🔶 Repository license. Checklist step 0.2.
 
 ## Next
 
-1. Resolve the two open decisions above.
-2. Begin Phase 0 of `BUILD-CHECKLIST.md`.
+1. Resolve the open decision above.
+2. Continue Phase 0 of `BUILD-CHECKLIST.md` at step 0.3.

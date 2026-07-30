@@ -1,6 +1,6 @@
 # ADR-0008: Python core for V1
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-07-29
 
 ## Context
