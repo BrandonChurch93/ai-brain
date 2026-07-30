@@ -3,7 +3,9 @@ name = "brain"
 version = "0.1.0"
 description = "Shared robot brain: planning, perception, memory, safety, telemetry; many bodies via a versioned adapter protocol."
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "jsonschema[format-nongpl]>=4.23",
+]
 
 [build-system]
 requires = ["hatchling"]

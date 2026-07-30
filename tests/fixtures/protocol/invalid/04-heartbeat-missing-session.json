@@ -1,0 +1,8 @@
+{
+  "_violates": "session is required on every message except hello and reject. SPEC 4: a post-handshake message with no session cannot be attributed to a connection.",
+  "type": "heartbeat",
+  "id": "01JZQK8N4T0000000000000010",
+  "seq": 6,
+  "ts": { "mono_ns": 9916000000, "utc": "2026-07-29T18:00:03.500Z" },
+  "payload": { "state": "ok", "uptime_ms": 123456 }
+}

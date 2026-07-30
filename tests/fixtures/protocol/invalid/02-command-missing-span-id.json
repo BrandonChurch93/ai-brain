@@ -1,0 +1,15 @@
+{
+  "_violates": "Envelope span_id is required on command. SPEC 6.6: without it a body cannot deduplicate a retransmission, so a command could execute twice.",
+  "type": "command",
+  "id": "01JZQK8N4T000000000000000Y",
+  "session": "sess_01JZQK8N4T",
+  "seq": 4,
+  "ts": { "mono_ns": 9920100000, "utc": "2026-07-29T18:00:07.600Z" },
+  "trace_id": "trc_greet",
+  "payload": {
+    "capability": "spk0",
+    "action": "say",
+    "params": { "text": "Hello." },
+    "ttl_ms": 5000
+  }
+}

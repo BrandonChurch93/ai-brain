@@ -1,0 +1,18 @@
+{
+  "_comment": "Forward compatibility (SPEC section 4, section 9.1): a body built against a later, additively-grown schema. Unknown envelope fields (priority, hop_count), unknown payload fields (checksum), and unknown data fields MUST all validate and be ignored, never rejected.",
+  "type": "event",
+  "id": "01JZQK8N4T00000000000000T1",
+  "session": "sess_01JZQK8N4T",
+  "seq": 18,
+  "ts": { "mono_ns": 9932000000, "utc": "2026-07-29T18:00:18.000Z", "tai_ns": 9932000037 },
+  "trace_id": "trc_patrol",
+  "priority": "high",
+  "hop_count": 2,
+  "payload": {
+    "capability": "range0",
+    "event": "range",
+    "data": { "meters": 1.83, "confidence": 0.92 },
+    "droppable": false,
+    "checksum": "crc32:8a1f20be"
+  }
+}

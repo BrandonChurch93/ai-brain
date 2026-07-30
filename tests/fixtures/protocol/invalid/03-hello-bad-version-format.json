@@ -1,0 +1,20 @@
+{
+  "_violates": "ProtocolVersion pattern ^\\d{4}-\\d{2}-\\d{2}$. SPEC 5.1: version strings are dates; 'v1' and a zero-padding-free date are not.",
+  "type": "hello",
+  "id": "01JZQK8N4T000000000000000Z",
+  "seq": 1,
+  "ts": { "mono_ns": 1043221000, "utc": "2026-07-29T18:00:00.000Z" },
+  "payload": {
+    "protocol_versions": ["v1", "2026-7-29"],
+    "auth_token": "dev",
+    "manifest": {
+      "body_id": "mock-01",
+      "hardware_class": "virtual",
+      "boot_state": "safe_hold",
+      "adapter": { "name": "mock-adapter", "version": "0.1.0" },
+      "capabilities": [
+        { "id": "sys", "class": "system", "actions": ["ping"], "events": ["state"] }
+      ]
+    }
+  }
+}

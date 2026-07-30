@@ -1,0 +1,9 @@
+{
+  "type": "estop",
+  "id": "01JZQK8N4T00000000000000Q1",
+  "session": "sess_01JZQK8N4T",
+  "seq": 15,
+  "ts": { "mono_ns": 9925000000, "utc": "2026-07-29T18:00:11.000Z" },
+  "trace_id": "trc_patrol",
+  "payload": { "reason": "operator voice command" }
+}

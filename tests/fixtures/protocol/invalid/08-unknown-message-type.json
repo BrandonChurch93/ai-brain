@@ -1,0 +1,9 @@
+{
+  "_violates": "Envelope.type enum. The 12 message types are closed (SPEC 6); an unknown type is answered with an error message, code unknown_type, not silently accepted. Note this is the one place where openness stops: unknown FIELDS are ignored, unknown TYPES are refused.",
+  "type": "shutdown",
+  "id": "01JZQK8N4T0000000000000014",
+  "session": "sess_01JZQK8N4T",
+  "seq": 19,
+  "ts": { "mono_ns": 9933000000, "utc": "2026-07-29T18:00:19.000Z" },
+  "payload": { "delay_ms": 0 }
+}

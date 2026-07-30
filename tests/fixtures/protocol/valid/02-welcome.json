@@ -1,0 +1,18 @@
+{
+  "type": "welcome",
+  "id": "01JZQK8N4T00000000000000B1",
+  "session": "sess_01JZQK8N4T",
+  "seq": 1,
+  "ts": { "mono_ns": 9912340000, "utc": "2026-07-29T18:00:00.050Z" },
+  "payload": {
+    "protocol_version": "2026-07-29",
+    "session": "sess_01JZQK8N4T",
+    "server": { "name": "brain", "version": "0.1.0" },
+    "utc_now": "2026-07-29T18:00:00.050Z",
+    "heartbeat": { "interval_ms": 1000, "lease_ms": 3000 },
+    "capability_ack": {
+      "recognized": ["sys", "cam0", "mic0", "spk0"],
+      "unrecognized": []
+    }
+  }
+}

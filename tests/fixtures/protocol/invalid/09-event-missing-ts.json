@@ -1,0 +1,12 @@
+{
+  "_violates": "Envelope requires ts. SPEC 4: ts is t_captured, and without it the flight recorder cannot order the message or measure transport latency against t_received (ADR-0005).",
+  "type": "event",
+  "id": "01JZQK8N4T0000000000000015",
+  "session": "sess_01JZQK8N4T",
+  "seq": 8,
+  "payload": {
+    "capability": "sys",
+    "event": "state",
+    "data": { "state": "ok", "cause": "boot" }
+  }
+}

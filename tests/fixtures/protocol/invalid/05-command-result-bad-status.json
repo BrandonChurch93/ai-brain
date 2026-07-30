@@ -1,0 +1,11 @@
+{
+  "_violates": "CommandResultPayload.status enum. SPEC 6.7: the status set is closed, split into non-terminal (accepted, running) and terminal (succeeded, failed, expired, rejected). 'done' is neither.",
+  "type": "command_result",
+  "id": "01JZQK8N4T0000000000000011",
+  "session": "sess_01JZQK8N4T",
+  "seq": 13,
+  "ts": { "mono_ns": 9923000000, "utc": "2026-07-29T18:00:09.900Z" },
+  "trace_id": "trc_greet",
+  "span_id": "spn_say_1",
+  "payload": { "status": "done", "progress": 1.0, "data": {}, "error": null }
+}

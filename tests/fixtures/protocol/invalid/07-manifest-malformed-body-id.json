@@ -1,0 +1,17 @@
+{
+  "_violates": "Manifest.body_id pattern ^[a-z0-9][a-z0-9-]*$. Body ids are lowercase and hyphenated so they are safe as log keys and channel names; 'Laptop_01' is neither.",
+  "type": "manifest",
+  "id": "01JZQK8N4T0000000000000013",
+  "session": "sess_01JZQK8N4T",
+  "seq": 5,
+  "ts": { "mono_ns": 9915100000, "utc": "2026-07-29T18:00:02.600Z" },
+  "payload": {
+    "body_id": "Laptop_01",
+    "hardware_class": "workstation",
+    "boot_state": "ok",
+    "adapter": { "name": "laptop-adapter", "version": "0.1.0" },
+    "capabilities": [
+      { "id": "sys", "class": "system", "actions": ["ping"], "events": ["state"] }
+    ]
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "type": "heartbeat",
+  "id": "01JZQK8N4T00000000000000G1",
+  "session": "sess_01JZQK8N4T",
+  "seq": 7,
+  "ts": { "mono_ns": 9917000000, "utc": "2026-07-29T18:00:04.500Z" },
+  "payload": { "state": "degraded" }
+}

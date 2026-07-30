@@ -1,0 +1,9 @@
+{
+  "_violates": "EstopPayload.reason minLength 1. ADR-0006: an emergency stop is always attributable; a blank reason is not a reason.",
+  "type": "estop",
+  "id": "01JZQK8N4T0000000000000012",
+  "session": "sess_01JZQK8N4T",
+  "seq": 15,
+  "ts": { "mono_ns": 9925000000, "utc": "2026-07-29T18:00:11.000Z" },
+  "payload": { "reason": "" }
+}

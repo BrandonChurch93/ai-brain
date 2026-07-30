@@ -1,0 +1,15 @@
+{
+  "type": "command_result",
+  "id": "01JZQK8N4T00000000000000M1",
+  "session": "sess_01JZQK8N4T",
+  "seq": 12,
+  "ts": { "mono_ns": 9922000000, "utc": "2026-07-29T18:00:09.100Z" },
+  "trace_id": "trc_greet",
+  "span_id": "spn_say_1",
+  "payload": {
+    "status": "running",
+    "progress": 0.4,
+    "data": { "spoken_chars": 3 },
+    "error": null
+  }
+}

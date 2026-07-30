@@ -1,0 +1,11 @@
+{
+  "type": "reject",
+  "id": "01JZQK8N4T00000000000000C1",
+  "seq": 1,
+  "ts": { "mono_ns": 9912350000, "utc": "2026-07-29T18:00:00.051Z" },
+  "payload": {
+    "code": "unsupported_version",
+    "message": "no common protocol version; body offered 2099-01-01",
+    "supported": ["2026-07-29"]
+  }
+}

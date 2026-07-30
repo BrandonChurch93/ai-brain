@@ -1,0 +1,36 @@
+{
+  "type": "manifest",
+  "id": "01JZQK8N4T00000000000000E1",
+  "session": "sess_01JZQK8N4T",
+  "seq": 5,
+  "ts": { "mono_ns": 9915100000, "utc": "2026-07-29T18:00:02.600Z" },
+  "payload": {
+    "body_id": "mock-01",
+    "display_name": "Mock body",
+    "hardware_class": "virtual",
+    "boot_state": "safe_hold",
+    "adapter": { "name": "mock-adapter", "version": "0.1.0" },
+    "capabilities": [
+      {
+        "id": "sys",
+        "class": "system",
+        "actions": ["ping", "clear_safe_hold"],
+        "events": ["state", "log"]
+      },
+      {
+        "id": "drive0",
+        "class": "differential_drive",
+        "attributes": { "max_linear_mps": 0.4, "max_angular_rps": 1.2 },
+        "actions": ["set_velocity", "stop"],
+        "events": ["odometry"]
+      },
+      {
+        "id": "range0",
+        "class": "range_sensor",
+        "attributes": { "min_m": 0.05, "max_m": 4.0, "fov_deg": 25 },
+        "actions": ["read"],
+        "events": ["range"]
+      }
+    ]
+  }
+}

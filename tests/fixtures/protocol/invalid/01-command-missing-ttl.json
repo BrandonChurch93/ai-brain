@@ -1,0 +1,15 @@
+{
+  "_violates": "CommandPayload requires ttl_ms. SPEC 6.6: every command has a lifespan; this is what makes a stalled network inherently safe.",
+  "type": "command",
+  "id": "01JZQK8N4T000000000000000X",
+  "session": "sess_01JZQK8N4T",
+  "seq": 3,
+  "ts": { "mono_ns": 9920000000, "utc": "2026-07-29T18:00:07.500Z" },
+  "trace_id": "trc_patrol",
+  "span_id": "spn_drive_9",
+  "payload": {
+    "capability": "drive0",
+    "action": "set_velocity",
+    "params": { "linear_mps": 0.2, "angular_rps": 0.0 }
+  }
+}

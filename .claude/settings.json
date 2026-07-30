@@ -41,7 +41,9 @@
       "Bash(uv run *)",
       "Bash(echo \"pytest exit: $?\")",
       "Bash(echo \"ruff exit: $?\")",
-      "Bash(echo \"fmt exit: $?\")"
+      "Bash(echo \"fmt exit: $?\")",
+      "Bash(uv add *)",
+      "Bash(python3 -c ' *)"
     ],
     "deny": [
       "Bash(rm -rf *)",

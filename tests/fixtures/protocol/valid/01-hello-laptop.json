@@ -1,0 +1,47 @@
+{
+  "type": "hello",
+  "id": "01JZQK8N4T00000000000000A1",
+  "seq": 1,
+  "ts": { "mono_ns": 1043221000, "utc": "2026-07-29T18:00:00.000Z" },
+  "payload": {
+    "protocol_versions": ["2026-07-29"],
+    "auth_token": "dev",
+    "manifest": {
+      "body_id": "laptop-01",
+      "display_name": "MacBook body",
+      "hardware_class": "workstation",
+      "boot_state": "ok",
+      "adapter": { "name": "laptop-adapter", "version": "0.1.0" },
+      "capabilities": [
+        {
+          "id": "sys",
+          "class": "system",
+          "actions": ["ping", "clear_safe_hold"],
+          "events": ["state", "log"]
+        },
+        {
+          "id": "cam0",
+          "class": "camera",
+          "attributes": { "formats": ["jpeg"], "resolutions": ["1280x720"], "max_fps": 5 },
+          "actions": ["snapshot", "start_stream", "stop_stream"],
+          "events": ["frame"],
+          "do_command": true
+        },
+        {
+          "id": "mic0",
+          "class": "microphone",
+          "attributes": { "sample_rate_hz": 16000, "channels": 1, "encoding": "pcm_s16le" },
+          "actions": ["start_capture", "stop_capture"],
+          "events": ["audio_chunk"]
+        },
+        {
+          "id": "spk0",
+          "class": "speaker",
+          "attributes": { "tts": "local" },
+          "actions": ["say", "play", "stop"],
+          "events": ["playback_state"]
+        }
+      ]
+    }
+  }
+}

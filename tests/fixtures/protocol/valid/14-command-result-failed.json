@@ -1,0 +1,17 @@
+{
+  "type": "command_result",
+  "id": "01JZQK8N4T00000000000000P1",
+  "session": "sess_01JZQK8N4T",
+  "seq": 14,
+  "ts": { "mono_ns": 9924000000, "utc": "2026-07-29T18:00:10.400Z" },
+  "trace_id": "trc_patrol",
+  "span_id": "spn_drive_1",
+  "payload": {
+    "status": "failed",
+    "data": {},
+    "error": {
+      "code": "latched_safe_state",
+      "message": "body is in safe_hold; actuation refused"
+    }
+  }
+}

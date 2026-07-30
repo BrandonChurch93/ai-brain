@@ -1,0 +1,16 @@
+{
+  "type": "command",
+  "id": "01JZQK8N4T00000000000000L1",
+  "session": "sess_01JZQK8N4T",
+  "seq": 11,
+  "ts": { "mono_ns": 9921000000, "utc": "2026-07-29T18:00:08.500Z" },
+  "trace_id": "trc_patrol",
+  "span_id": "spn_drive_1",
+  "payload": {
+    "capability": "drive0",
+    "action": "set_velocity",
+    "params": { "linear_mps": 0.2, "angular_rps": 0.0 },
+    "ttl_ms": 500,
+    "expects_result": true
+  }
+}
