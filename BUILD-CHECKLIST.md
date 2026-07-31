@@ -66,7 +66,7 @@ References used throughout: CLAUDE.md (rules), STATE.md (V1 definition and accep
 
 ## Phase 3 · Mock body and safety semantics
 
-- [ ] 3.1 Mock body adapter, separate process, connects as a client: manifest with `sys`, `differential_drive`, `range_sensor`; `boot_state: safe_hold`; fake odometry and range events on a timer.
+- [x] 3.1 Mock body adapter, separate process, connects as a client: manifest with `sys`, `differential_drive`, `range_sensor`; `boot_state: safe_hold`; fake odometry and range events on a timer.
       refs: SPEC §7; ADR-0003
       done: handshake completes; manifest validates; sys state event emitted on boot.
 - [ ] 3.2 Body-side command semantics: TTL enforcement from receipt time, span_id dedupe within session, exactly one terminal result per span.

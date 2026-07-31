@@ -67,6 +67,23 @@ class WireModel(BaseModel):
     model_config = ConfigDict(extra="allow", populate_by_name=True)
 
 
+def without_none(**fields: Any) -> dict[str, Any]:
+    """Drop fields whose value is None, for building messages.
+
+    Serialization keeps whatever was explicitly set, which is what preserves
+    the difference between an absent field and a null one. The cost is that
+    passing `trace_id=None` to a constructor marks it set, and the message
+    then carries `"trace_id": null` where the schema wants a string or
+    nothing at all. Optional envelope fields are almost always "omit if I do
+    not have one", so builders route through here rather than each
+    remembering the trap.
+
+    Payload fields that are genuinely nullable, such as a command result's
+    `error`, are set directly on the payload instead.
+    """
+    return {name: value for name, value in fields.items() if value is not None}
+
+
 # Shared structures
 
 

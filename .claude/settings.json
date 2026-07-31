@@ -59,7 +59,17 @@
       "Bash(mcap doctor *)",
       "Bash(echo \"garbage\")",
       "Bash(PATH=\"/usr/bin:/bin\" BRAIN_REQUIRE_MCAP_CLI=1 uv run pytest tests/test_mcap_cli_conformance.py::test_doctor_finds_nothing_wrong)",
-      "Bash(BRAIN_REQUIRE_MCAP_CLI=1 BRAIN_FAKE_PATH=1 uv run env PATH=\"/usr/bin:/bin\" python -m pytest tests/test_mcap_cli_conformance.py::test_doctor_finds_nothing_wrong)"
+      "Bash(BRAIN_REQUIRE_MCAP_CLI=1 BRAIN_FAKE_PATH=1 uv run env PATH=\"/usr/bin:/bin\" python -m pytest tests/test_mcap_cli_conformance.py::test_doctor_finds_nothing_wrong)",
+      "Bash(.venv/bin/python -c \"import sys; print\\([p for p in sys.path if 'ai-brain' in p]\\)\")",
+      "Bash(.venv/bin/python -c \"import brain; print\\('ok', brain.__file__\\)\")",
+      "Bash(.venv/bin/python -c ' *)",
+      "Bash(.venv/bin/python -)",
+      "Bash(awk '{print $NF, $5}')",
+      "Bash(chflags nohidden *)",
+      "Bash(.venv/bin/python -c \"import bodies, brain, wire; print\\('imports OK:', bodies.__name__, brain.__name__, wire.__name__\\)\")",
+      "Bash(PYTHONPATH=src uv run python /tmp/brain_run.py)",
+      "Bash(awk '{print \"flag:\", $5}')",
+      "Bash(.venv/bin/python -c \"import bodies\")"
     ],
     "deny": [
       "Bash(rm -rf *)",

@@ -47,6 +47,7 @@ from wire.models import (
     Timestamp,
     WelcomeEnvelope,
     WelcomePayload,
+    without_none,
 )
 from wire.schema import (
     SUBPROTOCOL,
@@ -114,4 +115,5 @@ __all__ = [
     "to_object",
     "validate_message",
     "validator",
+    "without_none",
 ]

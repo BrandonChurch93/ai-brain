@@ -17,8 +17,11 @@ from hypothesis import strategies as st
 from hypothesis_jsonschema import from_schema
 
 from wire import (
+    EventEnvelope,
+    EventPayload,
     MalformedFrameError,
     ProtocolValidationError,
+    Timestamp,
     decode,
     decode_object,
     encode,
@@ -26,6 +29,7 @@ from wire import (
     message_types,
     protocol_schema,
     to_object,
+    without_none,
 )
 
 VALID_FIXTURES = sorted((Path(__file__).parent / "fixtures" / "protocol" / "valid").glob("*.json"))
@@ -163,6 +167,32 @@ def test_absent_and_null_are_not_confused() -> None:
     explicit = json.loads(json.dumps(base))
     explicit["payload"]["error"] = None
     assert to_object(decode_object(explicit))["payload"]["error"] is None
+
+
+def test_an_unset_optional_is_omitted_rather_than_nulled() -> None:
+    """The trap `without_none` exists for.
+
+    Serialization keeps whatever was explicitly set, which is what preserves
+    absent-versus-null. The cost is that passing `trace_id=None` marks it set
+    and emits `"trace_id": null`, which the schema refuses because the field
+    is a string. This has bitten twice: a reject's `supported` and an event's
+    `trace_id`.
+    """
+    fields = without_none(
+        type="event",
+        id="01JZQK8N4T00000000000000H1",
+        session="sess_1",
+        seq=2,
+        ts=Timestamp(mono_ns=1, utc="2026-07-29T18:00:00.000Z"),
+        trace_id=None,
+        span_id=None,
+        payload=EventPayload(capability="sys", event="state", data={"state": "ok"}),
+    )
+    rendered = to_object(EventEnvelope(**fields))
+
+    assert "trace_id" not in rendered
+    assert "span_id" not in rendered
+    assert is_valid(rendered)
 
 
 def test_decode_rejects_a_frame_that_is_not_json() -> None:

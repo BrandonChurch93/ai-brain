@@ -88,7 +88,12 @@ def test_a_nonpositive_lease_is_refused() -> None:
 
 def test_a_wall_clock_jump_does_not_expire_the_lease() -> None:
     """The reason deadlines are measured on the monotonic clock. An NTP
-    correction would otherwise expire every lease in a fleet at once."""
+    correction would otherwise expire every lease in a fleet at once.
+
+    Covers SPEC section 4's skew-tolerance rule: clock skew of tens of
+    milliseconds between devices is expected and MUST be tolerated. Proven
+    here for an hour forwards and two hours back.
+    """
     clock = ManualClock()
     watch = LeaseWatch(1000, clock)
 

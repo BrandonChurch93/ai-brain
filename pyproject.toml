@@ -10,6 +10,11 @@ dependencies = [
     "websockets>=17.0",
 ]
 
+[project.scripts]
+# Runs the mock body as its own process, which is how a body actually
+# deploys: separate process, dials the brain (ADR-0001, ADR-0002).
+mock-body = "bodies.mock:main"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -28,6 +33,11 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Also how anything that launches a process must find the packages. On macOS
+# uv writes its editable-install .pth with the UF_HIDDEN flag, and CPython's
+# site.addpackage silently skips hidden .pth files, so `src/` never reaches
+# sys.path and imports fail with no explanation. Scripts that start a brain
+# or a body set PYTHONPATH=src for the same reason.
 pythonpath = ["src", "tests"]
 addopts = "-q --strict-markers"
 markers = [
