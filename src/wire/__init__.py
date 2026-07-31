@@ -16,6 +16,7 @@ from wire.codec import (
     to_object,
 )
 from wire.models import (
+    ACTUATING_CLASSES,
     ENVELOPE_BY_TYPE,
     LATCHED_STATES,
     MESSAGE_ADAPTER,
@@ -68,6 +69,7 @@ from wire.validation import (
 )
 
 __all__ = [
+    "ACTUATING_CLASSES",
     "ENVELOPE_BY_TYPE",
     "LATCHED_STATES",
     "MESSAGE_ADAPTER",

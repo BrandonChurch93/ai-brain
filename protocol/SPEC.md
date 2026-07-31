@@ -216,6 +216,7 @@ Codes: `malformed`, `unknown_type`, `unknown_capability`, `unknown_action`, `inv
 
 - `hardware_class`: `workstation`, `sbc`, `microcontroller`, `mobile_base`, `virtual`.
 - `boot_state`: the state a freshly started body process enters. Bodies with actuation MUST boot into `safe_hold` (motion requires an explicit clear); sensor-only bodies MAY boot into `ok`.
+  - For `boot_state`, **actuation** means a capability class that produces physical motion or mechanical effect. In v1 that is exactly `differential_drive`; a future motion class joins this list explicitly when it is added. Output classes such as `speaker` and `display` are not actuation for this purpose, so a body whose capabilities are only sensing or output MAY boot `ok`.
 - `capabilities[].actions` and `.events` MUST be subsets of the class registry entries for that class. Extra, nonstandard functionality is reached through `do_command` (action name `do_command`, free-form `params`), which every capability supports implicitly. That is the escape hatch: nonstandard features never fork the protocol.
 - The manifest is the planner's affordance set. The brain's validator refuses any command whose capability id, action, or param bounds are not covered by the current manifest (ADR-0003, ADR-0004).
 

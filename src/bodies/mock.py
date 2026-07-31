@@ -25,6 +25,7 @@ from bodies.commands import FAILED, CommandLedger, Outcome, rejected, succeeded
 from bodies.dispatch import CommandDispatcher
 from bodies.safety import LATCHED_SAFE_STATE, SafetyState
 from wire import (
+    ACTUATING_CLASSES,
     CommandEnvelope,
     EstopClearEnvelope,
     EstopEnvelope,
@@ -43,10 +44,6 @@ DEFAULT_URL = "ws://127.0.0.1:8765"
 #: telemetry as JSON, and sustained high rates are the reserved binary seam,
 #: not a v1 feature (SPEC section 6.5).
 DEFAULT_TELEMETRY_MS = 500
-
-#: Capability classes that can move something. Spans on these are the ones a
-#: latch must fail (SPEC section 8.1, "in-flight actuation spans").
-ACTUATING_CLASSES = frozenset({"differential_drive"})
 
 #: Bounds the brain's validator grounds `set_velocity` against (ADR-0004).
 MAX_LINEAR_MPS = 0.4

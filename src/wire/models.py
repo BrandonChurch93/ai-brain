@@ -60,6 +60,15 @@ TERMINAL_STATUSES: frozenset[str] = frozenset({"succeeded", "failed", "expired",
 #: States that latch and never clear themselves (SPEC section 8.2).
 LATCHED_STATES: frozenset[str] = frozenset({"safe_hold", "estopped"})
 
+#: Capability classes that produce physical motion or mechanical effect
+#: (SPEC section 7.1). A body declaring any of these MUST boot `safe_hold`.
+#:
+#: Output classes such as `speaker` and `display` are deliberately absent:
+#: they do something in the world but cannot move, and a hold that protected
+#: nothing would be cleared by rote at the start of every session. A future
+#: motion class joins this set and the SPEC list together.
+ACTUATING_CLASSES: frozenset[str] = frozenset({"differential_drive"})
+
 
 class WireModel(BaseModel):
     """Base for everything on the wire. Keeps unknown fields."""

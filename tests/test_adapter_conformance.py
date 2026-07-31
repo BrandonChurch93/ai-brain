@@ -32,10 +32,16 @@ import pytest
 
 from adapters import ADAPTER_IDS, ADAPTERS, AdapterCase
 from bodies.client import BodyConfig
-from bodies.mock import ACTUATING_CLASSES
 from brain.config import ServerConfig
 from brain.server import BrainServer
-from wire import CommandEnvelope, capability_classes, decode_object, is_valid, to_object
+from wire import (
+    ACTUATING_CLASSES,
+    CommandEnvelope,
+    capability_classes,
+    decode_object,
+    is_valid,
+    to_object,
+)
 from wire.clock import ManualClock
 
 TOKEN = "conformance-token"
@@ -145,7 +151,7 @@ def test_an_actuating_body_boots_into_safe_hold(case: AdapterCase) -> None:
     """SPEC section 7.1. Sensor-only bodies MAY boot `ok`; anything that can
     move MUST NOT."""
     manifest = case.manifest()
-    actuating = {"differential_drive"} & {
+    actuating = ACTUATING_CLASSES & {
         capability.capability_class for capability in manifest.capabilities
     }
     if actuating:
