@@ -258,6 +258,9 @@ async def test_telemetry_stays_within_declared_attributes(
 ) -> None:
     """A sensor reporting outside what its manifest declares makes the
     manifest a lie, and the manifest is the planner's affordance set."""
+    if not case.emits_telemetry:
+        pytest.skip(f"{case.name} reports when asked, not on a timer")
+
     server, received = brain
     clock = ManualClock()
     body = case.make(config_for(server), clock=clock)
@@ -285,6 +288,10 @@ async def test_telemetry_stays_within_declared_attributes(
 async def test_telemetry_is_droppable(
     case: AdapterCase, brain: tuple[BrainServer, list[Any]]
 ) -> None:
+    """SPEC section 6.5: sensor readings are what backpressure may skip."""
+    if not case.emits_telemetry:
+        pytest.skip(f"{case.name} reports when asked, not on a timer")
+
     server, received = brain
     clock = ManualClock()
     body = case.make(config_for(server), clock=clock)

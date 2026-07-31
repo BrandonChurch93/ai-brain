@@ -71,7 +71,10 @@
       "Bash(awk '{print \"flag:\", $5}')",
       "Bash(.venv/bin/python -c \"import bodies\")",
       "Bash(./scripts/drill)",
-      "Bash(PYTHONPATH=src uv run python -)"
+      "Bash(PYTHONPATH=src uv run python -)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('opencv-python:', d['info']['version']\\)\")",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('pillow:', d['info']['version']\\)\")",
+      "Bash(uv run python -c ' *)"
     ],
     "deny": [
       "Bash(rm -rf *)",

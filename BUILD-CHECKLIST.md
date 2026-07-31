@@ -83,7 +83,7 @@ References used throughout: CLAUDE.md (rules), STATE.md (V1 definition and accep
 
 ## Phase 4 · Laptop body
 
-- [ ] 4.1 Camera capability: `snapshot` via OpenCV/AVFoundation, jpeg base64 `frame` events per SPEC §6.5, modest resolution defaults.
+- [x] 4.1 Camera capability: `snapshot` via OpenCV/AVFoundation, jpeg base64 `frame` events per SPEC §6.5, modest resolution defaults.
       refs: SPEC §6.5, §7.2
       done: snapshot round trip lands in MCAP and decodes to a valid image in a test.
 - [ ] 4.2 Microphone capability: push-to-talk capture (`sounddevice`), `audio_chunk` events with declared sample rate and encoding.

@@ -10,10 +10,19 @@ dependencies = [
     "websockets>=17.0",
 ]
 
+[project.optional-dependencies]
+# Only a machine with a camera needs OpenCV, and CI has neither a camera nor
+# anyone to answer a macOS permission prompt. Install with:
+#   uv sync --extra laptop
+laptop = [
+    "opencv-python>=5.0",
+]
+
 [project.scripts]
 # Runs the mock body as its own process, which is how a body actually
 # deploys: separate process, dials the brain (ADR-0001, ADR-0002).
 mock-body = "bodies.mock:main"
+laptop-body = "bodies.laptop:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -26,6 +35,7 @@ packages = ["src/brain", "src/bodies", "src/wire"]
 dev = [
     "hypothesis>=6.164",
     "hypothesis-jsonschema>=0.23",
+    "pillow>=12.3",
     "pytest>=8.3",
     "pytest-asyncio>=1.4",
     "ruff>=0.8",
@@ -42,6 +52,7 @@ pythonpath = ["src", "tests"]
 addopts = "-q --strict-markers"
 markers = [
     "slow: consumes real wall-clock time; the suite keeps at most one",
+    "camera: needs a real camera and a granted macOS permission; local only",
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
