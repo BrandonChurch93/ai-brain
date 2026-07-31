@@ -70,7 +70,8 @@
       "Bash(PYTHONPATH=src uv run python /tmp/brain_run.py)",
       "Bash(awk '{print \"flag:\", $5}')",
       "Bash(.venv/bin/python -c \"import bodies\")",
-      "Bash(./scripts/drill)"
+      "Bash(./scripts/drill)",
+      "Bash(PYTHONPATH=src uv run python -)"
     ],
     "deny": [
       "Bash(rm -rf *)",

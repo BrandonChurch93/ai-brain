@@ -51,7 +51,15 @@ from bodies.mock import MockBody
 from brain.config import ServerConfig
 from brain.recorder import FlightRecorder
 from brain.server import BrainServer
-from wire import CommandEnvelope, CommandPayload, without_none
+from wire import (
+    CommandEnvelope,
+    CommandPayload,
+    EstopClearEnvelope,
+    EstopClearPayload,
+    EstopEnvelope,
+    EstopPayload,
+    without_none,
+)
 from wire.stamp import new_id, now
 
 TOKEN = "gate3-drill"
@@ -132,6 +140,45 @@ async def send_command(server: BrainServer, session: str, message: CommandEnvelo
     await state.send(message)
 
 
+async def send_estop(server: BrainServer, session: str, reason: str) -> None:
+    """A real estop on the wire, not an in-process call.
+
+    This is the direction that matters: the brain stopping a body. It also
+    exercises the priority path in the body's receive loop, which an
+    in-process call would skip entirely (SPEC section 8.3).
+    """
+    state = server.sessions[session]
+    await state.send(
+        EstopEnvelope(
+            **without_none(
+                type="estop",
+                id=new_id(),
+                session=session,
+                seq=state.record.outbound.take(),
+                ts=now(),
+                trace_id="trc_gate3",
+                payload=EstopPayload(reason=reason),
+            )
+        )
+    )
+
+
+async def send_estop_clear(server: BrainServer, session: str, reason: str, operator: str) -> None:
+    state = server.sessions[session]
+    await state.send(
+        EstopClearEnvelope(
+            **without_none(
+                type="estop_clear",
+                id=new_id(),
+                session=session,
+                seq=state.record.outbound.take(),
+                ts=now(),
+                payload=EstopClearPayload(reason=reason, operator=operator),
+            )
+        )
+    )
+
+
 async def main() -> int:
     events: list[Any] = []
     results: dict[str, Any] = {}
@@ -197,6 +244,15 @@ async def main() -> int:
         await until(lambda: "spn_drive" in results, what="the drive result")
         require(results["spn_drive"].payload.status == "succeeded", "drive command succeeded")
         require(body.pose.linear_mps > 0, f"body is moving at {body.pose.linear_mps} m/s")
+
+        step("Mission underway: heartbeats flowing both ways")
+        # Long enough for several beats at the configured interval. Without
+        # this the drill kills the socket within a few milliseconds of
+        # connecting, and the recording shows a mission that never breathed.
+        before = len(events)
+        await asyncio.sleep(INTERVAL_MS * 4 / 1000)
+        beats = [m for m in events[before:] if m.type == "heartbeat"]
+        require(len(beats) >= 2, f"{len(beats)} body heartbeats received on the interval")
 
         step("A span is left in flight")
         # Every mock action completes instantly, so nothing would still be
@@ -269,8 +325,9 @@ async def main() -> int:
         await until(lambda: body.state == "ok", what="the body to reach ok")
         require(body.state == "ok", "cleared back to ok")
 
-        await body.estop("operator pressed the button")
-        require(body.state == "estopped", "E-stop latched from idle")
+        await send_estop(server, session, "operator pressed the button")
+        await until(lambda: body.state == "estopped", what="the body to enter estopped")
+        require(body.state == "estopped", "E-stop latched from idle, over the wire")
 
         await send_command(server, session, command(session, "sys", "clear_safe_hold", "spn_bad"))
         await until(lambda: "spn_bad" in results, what="the refused clear")
@@ -279,7 +336,8 @@ async def main() -> int:
             "clear_safe_hold alone is refused while estopped",
         )
 
-        await body.clear_estop("obstacle removed", "brandon")
+        await send_estop_clear(server, session, "obstacle removed", "brandon")
+        await until(lambda: body.state == "safe_hold", what="the estop to clear")
         require(body.state == "safe_hold", "estop_clear lands in safe_hold, not in motion")
 
         await send_command(server, session, command(session, "sys", "clear_safe_hold", "spn_good"))

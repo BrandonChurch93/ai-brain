@@ -16,6 +16,7 @@ import contextlib
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from functools import partial
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 
@@ -50,6 +51,9 @@ MessageHandler = Callable[["SessionState", Reception], Awaitable[None]]
 #: gave up on as a result.
 LostHandler = Callable[["SessionState", list[SpanOutcome]], Awaitable[None]]
 
+#: How a session hands an outbound message to the flight recorder.
+Recorder = Callable[[str, Message], None]
+
 
 def _server_version() -> str:
     try:
@@ -71,6 +75,9 @@ class SessionState:
     #: Timing lives here rather than on the record, so the registry stays
     #: pure bookkeeping.
     lease: LeaseWatch | None = None
+    #: Set by the server. Every outbound message goes through `send`, and
+    #: `send` records, so there is one path and it cannot be bypassed.
+    recorder: Recorder | None = None
 
     @property
     def session(self) -> str:
@@ -89,7 +96,16 @@ class SessionState:
         return self.record.outbound
 
     async def send(self, message: Message) -> None:
+        """The only way out to a body, and therefore the only thing that has
+        to remember to record.
+
+        Recording used to live at each call site, which meant a new sender
+        was invisible to the flight recorder until somebody noticed. Commands
+        were invisible for exactly that reason (ADR-0005).
+        """
         await self.connection.send(encode(message))
+        if self.recorder is not None:
+            self.recorder("tx", message)
 
 
 class BrainServer:
@@ -197,8 +213,7 @@ class BrainServer:
         assert state.lease is not None
 
         async def send(message: HeartbeatEnvelope) -> None:
-            await state.connection.send(encode(message))
-            self._record("tx", message, session=state.session, body_id=state.body_id)
+            await state.send(message)
 
         async def lost(silent_ms: float) -> None:
             outcomes = self._registry.mark_lost(
@@ -287,11 +302,13 @@ class BrainServer:
             first_seq=outcome.first_seq,
             outbound=seq,
         )
-        return SessionState(
+        state = SessionState(
             record=record,
             connection=connection,
             lease=LeaseWatch(self._config.heartbeat_lease_ms, self._clock),
         )
+        state.recorder = partial(self._record, session=outcome.session, body_id=outcome.body_id)
+        return state
 
     async def _refuse(self, connection: ServerConnection, refused: Refused) -> None:
         log.info("rejecting body: %s (%s)", refused.reason, refused.reject.payload.code)
