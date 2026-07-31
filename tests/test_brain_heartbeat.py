@@ -1,18 +1,24 @@
-"""Heartbeats and lease detection (SPEC sections 6.4 and 8.1, ADR-0006)."""
+"""Heartbeats and lease detection (SPEC sections 6.4 and 8.1, ADR-0006).
+
+No real time anywhere in this file. Every deadline is driven by a
+`ManualClock` and a sleeper that advances it, so these run instantly and
+give the same answer on a loaded CI runner as on an idle laptop. A timing
+test that sleeps is slow when it passes and flaky when it fails, and a flaky
+safety test is a muted safety test.
+"""
 
 from __future__ import annotations
 
-import asyncio
 import logging
 
 import pytest
 
 from brain.heartbeat import LeaseWatch, brain_heartbeat, heartbeat_loop
 from brain.registry import BODY_LOST, SessionRegistry
+from helpers import LoopFinished, ticker
 from wire import Manifest, decode_object, to_object
+from wire.clock import ManualClock
 from wire.stamp import SeqCounter
-
-MS = 1_000_000
 
 
 def manifest() -> Manifest:
@@ -30,67 +36,66 @@ def manifest() -> Manifest:
     )
 
 
-class FakeClock:
-    """Monotonic nanoseconds under test control."""
-
-    def __init__(self) -> None:
-        self.ns = 0
-
-    def __call__(self) -> int:
-        return self.ns
-
-    def advance_ms(self, ms: float) -> None:
-        self.ns += int(ms * MS)
+async def run_loop(clock: ManualClock, ticks: int, **kwargs) -> None:
+    """Run the heartbeat loop for a fixed number of ticks."""
+    try:
+        await heartbeat_loop(clock=clock, sleep=ticker(clock, ticks), **kwargs)
+    except LoopFinished:
+        return
 
 
 # LeaseWatch
 
 
 def test_a_fresh_watch_is_not_expired() -> None:
-    clock = FakeClock()
-    assert not LeaseWatch(3000, clock).expired
+    assert not LeaseWatch(3000, ManualClock()).expired
 
 
 def test_lease_expires_exactly_at_the_limit() -> None:
-    clock = FakeClock()
+    clock = ManualClock()
     watch = LeaseWatch(3000, clock)
 
-    clock.advance_ms(2999)
+    clock.advance(ms=2999)
     assert not watch.expired
 
-    clock.advance_ms(1)
+    clock.advance(ms=1)
     assert watch.expired
 
 
 def test_a_heartbeat_renews_the_lease() -> None:
-    clock = FakeClock()
+    clock = ManualClock()
     watch = LeaseWatch(3000, clock)
 
-    clock.advance_ms(2900)
+    clock.advance(ms=2900)
     watch.beat()
-    clock.advance_ms(2900)
+    clock.advance(ms=2900)
 
     assert not watch.expired
     assert watch.silent_ms == pytest.approx(2900)
 
 
 def test_silence_is_measured_from_the_last_beat() -> None:
-    clock = FakeClock()
+    clock = ManualClock()
     watch = LeaseWatch(3000, clock)
-    clock.advance_ms(1500)
+    clock.advance(ms=1500)
     assert watch.silent_ms == pytest.approx(1500)
 
 
 def test_a_nonpositive_lease_is_refused() -> None:
     with pytest.raises(ValueError, match="lease must be positive"):
-        LeaseWatch(0, FakeClock())
+        LeaseWatch(0, ManualClock())
 
 
-def test_the_watch_uses_a_monotonic_clock_not_the_wall_clock() -> None:
-    """A wall-clock lease would expire an entire fleet at once on an NTP step."""
-    clock = FakeClock()
+def test_a_wall_clock_jump_does_not_expire_the_lease() -> None:
+    """The reason deadlines are measured on the monotonic clock. An NTP
+    correction would otherwise expire every lease in a fleet at once."""
+    clock = ManualClock()
     watch = LeaseWatch(1000, clock)
-    clock.ns -= 10_000 * MS  # a wall clock could do this; monotonic cannot
+
+    clock.jump_wall_clock(seconds=3600)
+    assert not watch.expired
+
+    clock.jump_wall_clock(seconds=-7200)
     assert not watch.expired
 
 
@@ -123,109 +128,145 @@ def test_brain_heartbeat_consumes_the_session_counter() -> None:
 
 
 async def test_loop_beats_on_the_interval() -> None:
-    clock = FakeClock()
+    clock = ManualClock()
     sent: list[str] = []
 
-    task = asyncio.create_task(
-        heartbeat_loop(
-            session="sess_1",
-            interval_ms=5,
-            watch=LeaseWatch(10_000, clock),
-            seq=SeqCounter(),
-            send=lambda message: sent.append(message.payload.state),
-            brain_state=lambda: "active",
-            on_lost=lambda silent: None,
-        )
+    await run_loop(
+        clock,
+        3,
+        session="sess_1",
+        interval_ms=1000,
+        watch=LeaseWatch(10_000, clock),
+        seq=SeqCounter(),
+        send=lambda message: sent.append(message.payload.state),
+        brain_state=lambda: "active",
+        on_lost=lambda silent: None,
     )
 
-    await asyncio.sleep(0.06)
-    task.cancel()
-
-    assert len(sent) >= 3
-    assert set(sent) == {"active"}
+    assert sent == ["active"] * 3
 
 
 async def test_loop_reports_a_lease_miss_once(caplog: pytest.LogCaptureFixture) -> None:
-    clock = FakeClock()
+    """Ten ticks past a lease that expires on the third. The report must fire
+    once, not on every tick after."""
+    clock = ManualClock()
     losses: list[float] = []
 
     with caplog.at_level(logging.WARNING, logger="brain.heartbeat"):
-        task = asyncio.create_task(
-            heartbeat_loop(
-                session="sess_1",
-                interval_ms=5,
-                watch=LeaseWatch(20, clock),
-                seq=SeqCounter(),
-                send=lambda message: clock.advance_ms(10),
-                brain_state=lambda: "active",
-                on_lost=lambda silent: losses.append(silent),
-            )
+        await run_loop(
+            clock,
+            10,
+            session="sess_1",
+            interval_ms=1000,
+            watch=LeaseWatch(2500, clock),
+            seq=SeqCounter(),
+            send=lambda message: None,
+            brain_state=lambda: "active",
+            on_lost=lambda silent: losses.append(silent),
         )
-        await asyncio.sleep(0.08)
-        task.cancel()
 
     assert len(losses) == 1, "a lease miss must not re-fire on every tick"
-    assert losses[0] >= 20
+    assert losses[0] == pytest.approx(3000)
     assert "lease missed" in caplog.text
 
 
 async def test_loop_notices_a_body_coming_back() -> None:
-    clock = FakeClock()
-    watch = LeaseWatch(20, clock)
+    clock = ManualClock()
+    watch = LeaseWatch(2500, clock)
     events: list[str] = []
+    ticks = 0
 
     def send(_message: object) -> None:
-        clock.advance_ms(10)
+        nonlocal ticks
+        ticks += 1
+        if ticks == 5:  # the body starts talking again
+            watch.beat()
 
-    task = asyncio.create_task(
-        heartbeat_loop(
-            session="sess_1",
-            interval_ms=5,
-            watch=watch,
-            seq=SeqCounter(),
-            send=send,
-            brain_state=lambda: "active",
-            on_lost=lambda silent: events.append("lost"),
-            on_recovered=lambda: events.append("recovered"),
-        )
+    await run_loop(
+        clock,
+        8,
+        session="sess_1",
+        interval_ms=1000,
+        watch=watch,
+        seq=SeqCounter(),
+        send=send,
+        brain_state=lambda: "active",
+        on_lost=lambda silent: events.append("lost"),
+        on_recovered=lambda: events.append("recovered"),
     )
 
-    while "lost" not in events:
-        await asyncio.sleep(0.005)
+    # Lost, back, then lost again: the single beat at tick 5 renews the lease
+    # but nothing follows it, so it expires a second time by tick 8. Each
+    # transition is reported once, which is the property that matters.
+    assert events == ["lost", "recovered", "lost"]
 
-    watch.beat()
-    while "recovered" not in events:
-        await asyncio.sleep(0.005)
 
-    task.cancel()
-    assert events[:2] == ["lost", "recovered"]
+async def test_a_lease_miss_does_not_end_the_loop() -> None:
+    """The socket may still be open and the body may come back, so the loop
+    keeps beating after it gives up on hearing one."""
+    clock = ManualClock()
+    sent = 0
+
+    def send(_message: object) -> None:
+        nonlocal sent
+        sent += 1
+
+    await run_loop(
+        clock,
+        6,
+        session="sess_1",
+        interval_ms=1000,
+        watch=LeaseWatch(2500, clock),
+        seq=SeqCounter(),
+        send=send,
+        brain_state=lambda: "active",
+        on_lost=lambda silent: None,
+    )
+
+    assert sent == 6
 
 
 async def test_a_failing_send_does_not_kill_the_loop() -> None:
     """A socket write can fail at any moment; the lease must still be watched."""
-    clock = FakeClock()
+    clock = ManualClock()
     losses: list[float] = []
 
     def send(_message: object) -> None:
-        clock.advance_ms(10)
         raise ConnectionResetError("socket went away")
 
-    task = asyncio.create_task(
-        heartbeat_loop(
-            session="sess_1",
-            interval_ms=5,
-            watch=LeaseWatch(20, clock),
-            seq=SeqCounter(),
-            send=send,
-            brain_state=lambda: "active",
-            on_lost=lambda silent: losses.append(silent),
-        )
+    await run_loop(
+        clock,
+        6,
+        session="sess_1",
+        interval_ms=1000,
+        watch=LeaseWatch(2500, clock),
+        seq=SeqCounter(),
+        send=send,
+        brain_state=lambda: "active",
+        on_lost=lambda silent: losses.append(silent),
     )
 
-    await asyncio.sleep(0.08)
-    task.cancel()
-
     assert losses, "lease miss went unreported because the send raised"
+
+
+async def test_the_loop_stamps_heartbeats_from_the_injected_clock() -> None:
+    """Nothing in the timing path reads the wall clock behind the test's back."""
+    clock = ManualClock()
+    stamps: list[int] = []
+
+    await run_loop(
+        clock,
+        3,
+        session="sess_1",
+        interval_ms=1000,
+        watch=LeaseWatch(10_000, clock),
+        seq=SeqCounter(),
+        send=lambda message: stamps.append(message.ts.mono_ns),
+        brain_state=lambda: "active",
+        on_lost=lambda silent: None,
+    )
+
+    assert stamps == [1_000_000_000, 2_000_000_000, 3_000_000_000]
 
 
 # Failing outstanding spans

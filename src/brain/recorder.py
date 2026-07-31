@@ -27,6 +27,7 @@ from typing import Any, Literal, Self
 from mcap.writer import Writer
 
 from wire import Manifest, Message, Timestamp, message_types, protocol_schema, schema_id, to_object
+from wire.clock import SYSTEM_CLOCK, Clock
 from wire.stamp import epoch_ns, now
 
 log = logging.getLogger("brain.recorder")
@@ -154,8 +155,9 @@ class FlightRecorder:
     them. A missing channel and a silent one mean different things.
     """
 
-    def __init__(self, path: Path | str) -> None:
+    def __init__(self, path: Path | str, clock: Clock = SYSTEM_CLOCK) -> None:
         self._path = Path(path)
+        self._clock = clock
         self._stream: Any = None
         self._writer: Writer | None = None
         self._channels: dict[str, int] = {}
@@ -258,7 +260,7 @@ class FlightRecorder:
         opened_at: Timestamp | None = None,
     ) -> None:
         """One `session_meta` record, written when the session opens."""
-        stamp = now() if opened_at is None else opened_at
+        stamp = now(self._clock) if opened_at is None else opened_at
 
         self._write(
             SESSION_META_TOPIC,
@@ -341,7 +343,7 @@ class FlightRecorder:
 
         # Inbound traffic was received; outbound traffic was not, and
         # inventing a t_received for it would be a lie in the log.
-        received = (t_received if t_received is not None else now()) if direction == "rx" else None
+        received = (t_received or now(self._clock)) if direction == "rx" else None
 
         record: dict[str, Any] = {
             "direction": direction,
@@ -364,7 +366,7 @@ class FlightRecorder:
         # recording anything built earlier walks log_time backwards, which
         # `mcap doctor` rightly complains about and which breaks the time
         # index readers rely on.
-        logged = received if received is not None else now()
+        logged = received if received is not None else now(self._clock)
 
         self._write(
             topic_for(message.type),

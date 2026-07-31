@@ -18,6 +18,7 @@ from wire import (
     WelcomeEnvelope,
     WelcomePayload,
 )
+from wire.clock import SYSTEM_CLOCK, Clock
 from wire.models import CapabilityAck, HeartbeatConfig, NamedVersion
 from wire.schema import supported_versions
 from wire.stamp import SeqCounter, new_id, new_session_id, now
@@ -87,6 +88,7 @@ def open_session(
     seq: SeqCounter,
     supported: tuple[str, ...] | None = None,
     utc_now: str | None = None,
+    clock: Clock = SYSTEM_CLOCK,
 ) -> Outcome:
     """Decide whether to welcome this body.
 
@@ -103,6 +105,7 @@ def open_session(
             code="auth_failed",
             message="authentication failed",
             seq=seq,
+            clock=clock,
             reason=f"bad token from body {hello.payload.manifest.body_id!r}",
         )
 
@@ -115,12 +118,13 @@ def open_session(
                 f"{', '.join(hello.payload.protocol_versions) or '(none)'}"
             ),
             seq=seq,
+            clock=clock,
             reason="version negotiation failed",
             supported=list(versions),
         )
 
     session = new_session_id()
-    stamp = now()
+    stamp = now(clock)
     declared = [capability.id for capability in hello.payload.manifest.capabilities]
 
     welcome = WelcomeEnvelope(
@@ -157,9 +161,9 @@ def open_session(
     )
 
 
-def malformed_hello(message: str, seq: SeqCounter) -> Refused:
+def malformed_hello(message: str, seq: SeqCounter, clock: Clock = SYSTEM_CLOCK) -> Refused:
     """The first frame was not a usable `hello` (SPEC section 6.3)."""
-    return _refuse(code="malformed_hello", message=message, seq=seq, reason=message)
+    return _refuse(code="malformed_hello", message=message, seq=seq, reason=message, clock=clock)
 
 
 def _refuse(
@@ -169,6 +173,7 @@ def _refuse(
     seq: SeqCounter,
     reason: str,
     supported: list[str] | None = None,
+    clock: Clock = SYSTEM_CLOCK,
 ) -> Refused:
     # `supported` is only set when there is a list to send. Passing None
     # explicitly would mark the field set, and serialization keeps set
@@ -182,7 +187,7 @@ def _refuse(
         type="reject",
         id=new_id(),
         seq=seq.take(),
-        ts=now(),
+        ts=now(clock),
         payload=RejectPayload(**payload_fields),  # type: ignore[arg-type]
     )
     return Refused(reject=reject, reason=reason)

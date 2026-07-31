@@ -14,7 +14,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError
@@ -25,7 +24,7 @@ from websockets.asyncio.server import Server, ServerConnection, serve
 
 from brain.config import ServerConfig
 from brain.handshake import Accepted, Refused, is_hello, malformed_hello, open_session
-from brain.heartbeat import BrainState, LeaseWatch, heartbeat_loop
+from brain.heartbeat import BrainState, LeaseWatch, Sleeper, heartbeat_loop
 from brain.recorder import FlightRecorder
 from brain.registry import Reception, SessionRecord, SessionRegistry, SpanOutcome
 from wire import (
@@ -37,6 +36,7 @@ from wire import (
     decode,
     encode,
 )
+from wire.clock import SYSTEM_CLOCK, Clock
 from wire.stamp import SeqCounter, now
 
 log = logging.getLogger("brain.server")
@@ -102,15 +102,17 @@ class BrainServer:
         on_message: MessageHandler | None = None,
         on_lost: LostHandler | None = None,
         recorder: FlightRecorder | None = None,
-        clock: Callable[[], int] = time.monotonic_ns,
+        clock: Clock = SYSTEM_CLOCK,
+        sleep: Sleeper = asyncio.sleep,
     ) -> None:
         self._config = config
         self._on_message = on_message
         self._on_lost = on_lost
         self._recorder = recorder
         self._clock = clock
+        self._sleep = sleep
         self._server: Server | None = None
-        self._registry = SessionRegistry()
+        self._registry = SessionRegistry(clock)
         self._sessions: dict[str, SessionState] = {}
         self._brain_state: BrainState = "active"
 
@@ -218,6 +220,8 @@ class BrainServer:
             brain_state=lambda: self._brain_state,
             on_lost=lost,
             on_recovered=recovered,
+            clock=self._clock,
+            sleep=self._sleep,
         )
 
     async def _open(self, connection: ServerConnection, seq: SeqCounter) -> SessionState | None:
@@ -227,14 +231,16 @@ class BrainServer:
         try:
             first = decode(raw)
         except MalformedFrameError as exc:
-            return await self._refuse(connection, malformed_hello(str(exc), seq))
+            return await self._refuse(connection, malformed_hello(str(exc), seq, self._clock))
         except ProtocolValidationError as exc:
-            return await self._refuse(connection, malformed_hello(str(exc), seq))
+            return await self._refuse(connection, malformed_hello(str(exc), seq, self._clock))
 
         if not is_hello(first):
             return await self._refuse(
                 connection,
-                malformed_hello(f"first message was {first.type!r}, expected 'hello'", seq),
+                malformed_hello(
+                    f"first message was {first.type!r}, expected 'hello'", seq, self._clock
+                ),
             )
 
         outcome = open_session(
@@ -244,6 +250,7 @@ class BrainServer:
             heartbeat_lease_ms=self._config.heartbeat_lease_ms,
             server_version=_server_version(),
             seq=seq,
+            clock=self._clock,
         )
 
         if isinstance(outcome, Refused):
@@ -327,7 +334,7 @@ class BrainServer:
             async for raw in state.connection:
                 # Stamped before parsing, so t_received measures the wire
                 # rather than how long validation took (SPEC section 4).
-                t_received = now()
+                t_received = now(self._clock)
 
                 try:
                     message = decode(raw)

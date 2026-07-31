@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from wire import CommandEnvelope, CommandResultEnvelope, Manifest, Message, Timestamp
+from wire.clock import SYSTEM_CLOCK, Clock
 from wire.stamp import SeqCounter, now
 
 log = logging.getLogger("brain.registry")
@@ -133,8 +134,9 @@ class SessionRecord:
 class SessionRegistry:
     """Every open session, keyed by session id."""
 
-    def __init__(self) -> None:
+    def __init__(self, clock: Clock = SYSTEM_CLOCK) -> None:
         self._records: dict[str, SessionRecord] = {}
+        self._clock = clock
 
     def open(
         self,
@@ -159,7 +161,7 @@ class SessionRegistry:
             body_id=body_id,
             protocol_version=protocol_version,
             manifest=manifest,
-            opened_at=now(),
+            opened_at=now(self._clock),
             inbound=SeqTracker(last=first_seq),
             outbound=outbound if outbound is not None else SeqCounter(),
         )
@@ -186,7 +188,7 @@ class SessionRegistry:
         """
         record = self._require(session)
 
-        stamp = now() if t_received is None else t_received
+        stamp = now(self._clock) if t_received is None else t_received
         status, missing = record.inbound.observe(message.seq)
 
         named = getattr(message, "session", None)

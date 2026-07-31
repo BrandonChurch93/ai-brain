@@ -6,10 +6,10 @@ than in either one.
 
 from __future__ import annotations
 
-import time
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime
 
+from wire.clock import SYSTEM_CLOCK, Clock
 from wire.models import Timestamp
 
 
@@ -27,16 +27,19 @@ def new_session_id() -> str:
     return f"sess_{uuid.uuid4().hex}"
 
 
-def now() -> Timestamp:
+def now(clock: Clock = SYSTEM_CLOCK) -> Timestamp:
     """t_captured for an outbound message (SPEC section 4).
 
     Two clocks on purpose. `mono_ns` orders messages within this process and
     cannot jump when the wall clock is corrected; `utc` correlates across
     devices, where tens of milliseconds of skew are expected and tolerated.
+
+    The clock is a parameter so timing behaviour can be driven by tests. The
+    default is real time, so callers that do not care need not say so.
     """
     return Timestamp(
-        mono_ns=time.monotonic_ns(),
-        utc=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        mono_ns=clock.mono_ns(),
+        utc=clock.utc().isoformat().replace("+00:00", "Z"),
     )
 
 

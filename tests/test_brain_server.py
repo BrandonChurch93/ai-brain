@@ -22,7 +22,9 @@ from brain.config import ServerConfig
 from brain.recorder import FlightRecorder
 from brain.registry import BODY_LOST, SeqStatus
 from brain.server import BrainServer
+from helpers import ticker
 from wire import SUBPROTOCOL, decode, decode_object
+from wire.clock import ManualClock
 from wire.schema import protocol_version
 
 TOKEN = "test-token"
@@ -230,10 +232,7 @@ async def test_inbound_messages_reach_the_handler_with_a_reception() -> None:
 
             await client.send(heartbeat_frame(welcome.session, 2))
 
-            for _ in range(200):
-                if received:
-                    break
-                await _tick()
+            await until(lambda: bool(received), what="the handler to see a message")
 
     assert received, "handler never saw the heartbeat"
     session, reception = received[0]
@@ -261,10 +260,7 @@ async def test_the_server_detects_a_seq_gap_end_to_end() -> None:
 
             await client.send(heartbeat_frame(welcome.session, 5))
 
-            for _ in range(200):
-                if received:
-                    break
-                await _tick()
+            await until(lambda: bool(received), what="the handler to see a message")
 
     assert received
     assert received[0].seq_status is SeqStatus.GAP
@@ -280,10 +276,10 @@ async def test_a_session_leaves_the_registry_when_the_socket_closes(
         welcome = decode(await client.recv())
         assert welcome.session in server.registry
 
-    for _ in range(200):
-        if welcome.session not in server.registry:
-            break
-        await _tick()
+    await until(
+        lambda: welcome.session not in server.registry,
+        what="the session to leave the registry",
+    )
 
     assert welcome.session not in server.registry
     assert welcome.session not in server.sessions
@@ -324,18 +320,30 @@ async def test_an_invalid_message_after_welcome_does_not_kill_the_session(
         welcome = decode(await client.recv())
 
         await client.send("{garbage")
-        for _ in range(200):
-            if welcome.session in server.sessions:
-                break
-            await _tick()
+        await until(
+            lambda: welcome.session in server.sessions,
+            what="the session to survive an invalid message",
+        )
 
         assert welcome.session in server.sessions
 
 
 async def _tick() -> None:
-    import asyncio
+    """Yield to the event loop without consuming real time."""
+    await asyncio.sleep(0)
 
-    await asyncio.sleep(0.005)
+
+async def until(condition, *, what: str, spins: int = 20_000) -> None:
+    """Spin the event loop until `condition` holds.
+
+    Bounded: an unbounded wait turns a regression into a hung suite, which is
+    harder to diagnose than a failure.
+    """
+    for _ in range(spins):
+        if condition():
+            return
+        await _tick()
+    raise AssertionError(f"timed out waiting for {what}")
 
 
 async def test_a_live_session_is_recorded_in_both_directions(tmp_path: Path) -> None:
@@ -418,7 +426,12 @@ async def test_a_recorder_failure_does_not_take_the_session_down() -> None:
             assert decode(await client.recv()).type == "welcome"
 
 
-# Step 1.4 done-check: a client that goes silent.
+# Heartbeats and lease detection (step 1.4).
+#
+# The clock and the loop's sleeper are injected, so these are deterministic
+# and instant. One test below is marked `slow` and uses real time on purpose:
+# it is the genuine socket-level drill, and something should exercise the
+# real asyncio.sleep path rather than only the fake one.
 
 FAST = ServerConfig(
     host="127.0.0.1",
@@ -430,7 +443,9 @@ FAST = ServerConfig(
 
 
 async def test_the_brain_sends_heartbeats_on_the_interval() -> None:
-    async with BrainServer(FAST) as running:
+    clock = ManualClock()
+
+    async with BrainServer(FAST, clock=clock, sleep=ticker(clock, 5, park=True)) as running:
         url = f"ws://127.0.0.1:{running.port}"
         async with connect(url, subprotocols=[SUBPROTOCOL]) as client:  # type: ignore[list-item]
             await client.send(hello_frame())
@@ -446,7 +461,9 @@ async def test_the_brain_sends_heartbeats_on_the_interval() -> None:
 
 async def test_brain_heartbeats_report_degraded_when_the_brain_is() -> None:
     """SPEC section 8.5: this is the only way DEGRADED reaches a body."""
-    async with BrainServer(FAST) as running:
+    clock = ManualClock()
+
+    async with BrainServer(FAST, clock=clock, sleep=ticker(clock, 5, park=True)) as running:
         running.brain_state = "degraded"
         url = f"ws://127.0.0.1:{running.port}"
         async with connect(url, subprotocols=[SUBPROTOCOL]) as client:  # type: ignore[list-item]
@@ -455,98 +472,127 @@ async def test_brain_heartbeats_report_degraded_when_the_brain_is() -> None:
             assert decode(await client.recv()).payload.state == "degraded"
 
 
-async def test_a_silent_body_is_marked_lost_within_the_lease() -> None:
-    """The done-check for step 1.4. The client connects, completes the
-    handshake, then says nothing at all."""
+async def test_a_silent_body_is_marked_lost_and_its_spans_fail() -> None:
+    """The done-check for step 1.4, driven by a fake clock.
+
+    The client completes the handshake, a command is put in flight, and then
+    it says nothing. Six ticks at 100ms against a 300ms lease means the lease
+    is missed with room to spare, deterministically.
+    """
+    clock = ManualClock()
     lost: list[Any] = []
 
     async def on_lost(state: Any, outcomes: Any) -> None:
         lost.append((state.session, outcomes))
 
-    async with BrainServer(FAST, on_lost=on_lost) as running:
+    async with BrainServer(
+        FAST, on_lost=on_lost, clock=clock, sleep=ticker(clock, 6, park=True)
+    ) as running:
         url = f"ws://127.0.0.1:{running.port}"
         async with connect(url, subprotocols=[SUBPROTOCOL]) as client:  # type: ignore[list-item]
             await client.send(hello_frame())
             welcome = decode(await client.recv())
 
-            deadline = 3.0
-            waited = 0.0
-            while not lost and waited < deadline:
-                await _tick()
-                waited += 0.005
+            running.registry.open_span(welcome.session, in_flight_command(welcome.session))  # type: ignore[arg-type]
 
-            assert lost, f"body not marked LOST within {deadline}s"
-            session, _ = lost[0]
+            await until(lambda: bool(lost), what="the body to be marked LOST")
+
+            session, outcomes = lost[0]
             assert session == welcome.session
 
             record = running.registry.get(welcome.session)
             assert record is not None
             assert record.lost
 
+            assert [outcome.span.span_id for outcome in outcomes] == ["spn_in_flight"]
+            assert outcomes[0].status == "failed"
+            assert outcomes[0].code == BODY_LOST
 
-async def test_a_body_that_keeps_heartbeating_is_never_lost() -> None:
-    lost: list[Any] = []
+
+async def test_an_inbound_heartbeat_renews_the_lease() -> None:
+    """The wiring that makes a live body stay live.
+
+    The beat loop is parked from the start, so nothing but the arriving
+    heartbeat can touch the lease. Whether a renewed lease then survives is
+    LeaseWatch's own tested behaviour; this is only about the wire reaching
+    it.
+    """
+    clock = ManualClock()
+
+    async with BrainServer(FAST, clock=clock, sleep=ticker(clock, 0, park=True)) as running:
+        url = f"ws://127.0.0.1:{running.port}"
+        async with connect(url, subprotocols=[SUBPROTOCOL]) as client:  # type: ignore[list-item]
+            await client.send(hello_frame())
+            welcome = decode(await client.recv())
+
+            state = running.sessions[welcome.session]
+            assert state.lease is not None
+
+            clock.advance(ms=200)
+            assert state.lease.silent_ms == pytest.approx(200)
+
+            await client.send(heartbeat_frame(welcome.session, 2))
+            await until(
+                lambda: running.registry.get(welcome.session).inbound.last >= 2,  # type: ignore[union-attr]
+                what="the heartbeat to be received",
+            )
+
+            assert state.lease.silent_ms == 0
+
+
+@pytest.mark.slow
+async def test_lease_detection_works_against_real_time() -> None:
+    """The one test in the suite that actually waits.
+
+    Everything else drives a fake clock, which proves the logic but not that
+    the real `asyncio.sleep` path is wired to it correctly. This runs the
+    genuine thing once, briefly, so a mistake in that wiring cannot hide
+    behind a fake everywhere.
+    """
+    lost: list[str] = []
 
     async def on_lost(state: Any, outcomes: Any) -> None:
         lost.append(state.session)
 
-    async with BrainServer(FAST, on_lost=on_lost) as running:
+    config = ServerConfig(
+        host="127.0.0.1",
+        port=0,
+        auth_token=TOKEN,
+        # The schema floors these at 100 and 300 (SPEC section 6.2), so this
+        # is as brief as a real-time lease miss can legally be.
+        heartbeat_interval_ms=100,
+        heartbeat_lease_ms=300,
+    )
+
+    async with BrainServer(config, on_lost=on_lost) as running:
         url = f"ws://127.0.0.1:{running.port}"
         async with connect(url, subprotocols=[SUBPROTOCOL]) as client:  # type: ignore[list-item]
             await client.send(hello_frame())
             welcome = decode(await client.recv())
-
-            for seq in range(2, 12):
-                await client.send(heartbeat_frame(welcome.session, seq))
-                await asyncio.sleep(0.05)
-
-            record = running.registry.get(welcome.session)
-            assert record is not None
-            assert not record.lost
-
-    assert not lost
-
-
-async def test_outstanding_spans_fail_when_the_body_is_lost() -> None:
-    """SPEC section 8.1: nothing upstream should wait forever on a result
-    that is never coming."""
-    lost: list[Any] = []
-
-    async def on_lost(state: Any, outcomes: Any) -> None:
-        lost.append(outcomes)
-
-    async with BrainServer(FAST, on_lost=on_lost) as running:
-        url = f"ws://127.0.0.1:{running.port}"
-        async with connect(url, subprotocols=[SUBPROTOCOL]) as client:  # type: ignore[list-item]
-            await client.send(hello_frame())
-            welcome = decode(await client.recv())
-
-            command = decode_object(
-                {
-                    "type": "command",
-                    "id": "01JZQK8N4T00000000000000K1",
-                    "session": welcome.session,
-                    "seq": 2,
-                    "ts": {"mono_ns": 1, "utc": "2026-07-29T18:00:00.000Z"},
-                    "trace_id": "trc_patrol",
-                    "span_id": "spn_in_flight",
-                    "payload": {
-                        "capability": "sys",
-                        "action": "ping",
-                        "params": {},
-                        "ttl_ms": 5000,
-                    },
-                }
-            )
-            running.registry.open_span(welcome.session, command)  # type: ignore[arg-type]
 
             waited = 0.0
-            while not lost and waited < 3.0:
-                await _tick()
-                waited += 0.005
+            while not lost and waited < 5.0:
+                await asyncio.sleep(0.01)
+                waited += 0.01
 
-            assert lost, "body never marked LOST"
-            outcomes = lost[0]
-            assert [outcome.span.span_id for outcome in outcomes] == ["spn_in_flight"]
-            assert outcomes[0].status == "failed"
-            assert outcomes[0].code == BODY_LOST
+    assert lost == [welcome.session], f"no lease miss after {waited:.1f}s of real silence"
+
+
+def in_flight_command(session: str):
+    return decode_object(
+        {
+            "type": "command",
+            "id": "01JZQK8N4T00000000000000K1",
+            "session": session,
+            "seq": 2,
+            "ts": {"mono_ns": 1, "utc": "2026-07-29T18:00:00.000Z"},
+            "trace_id": "trc_patrol",
+            "span_id": "spn_in_flight",
+            "payload": {
+                "capability": "sys",
+                "action": "ping",
+                "params": {},
+                "ttl_ms": 5000,
+            },
+        }
+    )

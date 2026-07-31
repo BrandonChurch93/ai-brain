@@ -12,9 +12,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 
 from wire import HeartbeatEnvelope, HeartbeatPayload
+from wire.clock import SYSTEM_CLOCK, Clock
 from wire.stamp import SeqCounter, new_id, now
 
 log = logging.getLogger("brain.heartbeat")
@@ -25,34 +26,34 @@ log = logging.getLogger("brain.heartbeat")
 #: checklist step 5.4.
 BrainState = str
 
-Clock = Callable[[], int]
+#: How the loop waits. Injectable so timing tests need no real time.
+Sleeper = Callable[[float], Awaitable[None]]
 
 
 class LeaseWatch:
     """Has this body been quiet for longer than its lease?
 
-    The clock is injectable so lease logic can be tested without waiting.
-    It reads monotonic nanoseconds, which cannot jump backwards when the
-    wall clock is corrected. A wall-clock lease could expire an entire fleet
+    Measured on the monotonic clock, which cannot jump backwards when the
+    wall clock is corrected. A wall-clock lease would expire an entire fleet
     at once on an NTP step.
     """
 
     __slots__ = ("_clock", "_last", "_lease_ns")
 
-    def __init__(self, lease_ms: int, clock: Clock, *, start: int | None = None) -> None:
+    def __init__(self, lease_ms: int, clock: Clock = SYSTEM_CLOCK, *, start: int | None = None):
         if lease_ms <= 0:
             raise ValueError(f"lease must be positive, got {lease_ms}ms")
         self._lease_ns = lease_ms * 1_000_000
         self._clock = clock
-        self._last = clock() if start is None else start
+        self._last = clock.mono_ns() if start is None else start
 
     def beat(self) -> None:
         """A heartbeat arrived."""
-        self._last = self._clock()
+        self._last = self._clock.mono_ns()
 
     @property
     def silent_ns(self) -> int:
-        return self._clock() - self._last
+        return self._clock.mono_ns() - self._last
 
     @property
     def silent_ms(self) -> float:
@@ -63,14 +64,19 @@ class LeaseWatch:
         return self.silent_ns >= self._lease_ns
 
 
-def brain_heartbeat(state: BrainState, session: str, seq: SeqCounter) -> HeartbeatEnvelope:
+def brain_heartbeat(
+    state: BrainState,
+    session: str,
+    seq: SeqCounter,
+    clock: Clock = SYSTEM_CLOCK,
+) -> HeartbeatEnvelope:
     """One outbound heartbeat (SPEC section 6.4)."""
     return HeartbeatEnvelope(
         type="heartbeat",
         id=new_id(),
         session=session,
         seq=seq.take(),
-        ts=now(),
+        ts=now(clock),
         payload=HeartbeatPayload(state=state),  # type: ignore[arg-type]
     )
 
@@ -85,6 +91,8 @@ async def heartbeat_loop(
     brain_state: Callable[[], BrainState],
     on_lost: Callable[[float], object],
     on_recovered: Callable[[], object] | None = None,
+    clock: Clock = SYSTEM_CLOCK,
+    sleep: Sleeper = asyncio.sleep,
 ) -> None:
     """Beat on the interval; report a lease miss when the body goes quiet.
 
@@ -94,15 +102,19 @@ async def heartbeat_loop(
 
     A lease miss does not end the loop. The socket may still be open, the
     body may come back, and the brain wants to notice that too.
+
+    `sleep` is a parameter for the same reason `clock` is: a test drives the
+    loop tick by tick and finishes instantly, rather than sleeping for real
+    and hoping the timing holds on a loaded CI runner.
     """
     interval_s = interval_ms / 1000
     reported = False
 
     while True:
-        await asyncio.sleep(interval_s)
+        await sleep(interval_s)
 
         with contextlib.suppress(Exception):
-            result = send(brain_heartbeat(brain_state(), session, seq))
+            result = send(brain_heartbeat(brain_state(), session, seq, clock))
             if asyncio.iscoroutine(result):
                 await result
 

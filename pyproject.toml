@@ -28,8 +28,11 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "tests"]
 addopts = "-q --strict-markers"
+markers = [
+    "slow: consumes real wall-clock time; the suite keeps at most one",
+]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 
