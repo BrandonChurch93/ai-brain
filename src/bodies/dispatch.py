@@ -120,13 +120,27 @@ class CommandDispatcher:
             message=f"capability {entry.capability!r} has no action {entry.action!r}",
         )
 
+    async def finish_span(self, entry: SpanEntry, outcome: Outcome) -> bool:
+        """End a span from outside a handler, as a latch does (section 8.1).
+
+        Returns False when the span had already ended, in which case nothing
+        is sent: exactly one terminal result per span holds no matter who is
+        trying to end it.
+        """
+        return await self._emit_terminal(entry, outcome, trace_id=entry.trace_id)
+
     async def _finish(self, command: CommandEnvelope, entry: SpanEntry, outcome: Outcome) -> None:
         """Send the single terminal result for this span."""
+        await self._emit_terminal(entry, outcome, trace_id=command.trace_id)
+
+    async def _emit_terminal(
+        self, entry: SpanEntry, outcome: Outcome, *, trace_id: str | None
+    ) -> bool:
         if not self._ledger.complete(entry, outcome.status):
-            return  # already ended; the ledger has logged it
+            return False  # already ended; the ledger has logged it
 
         if not entry.expects_result:
-            return
+            return True
 
         error = (
             ErrorDetail(code=outcome.code, message=outcome.message or "")
@@ -134,6 +148,21 @@ class CommandDispatcher:
             else None
         )
 
+        # The span has already ended locally. Announcing it is a courtesy the
+        # network may refuse, and a body that latched because the socket died
+        # must not fail to end its spans for want of that same socket.
+        try:
+            await self._send_result(entry, outcome, trace_id, error)
+        except Exception as exc:
+            log.warning(
+                "span %s ended %s but the result could not be sent: %s",
+                entry.span_id,
+                outcome.status,
+                exc,
+            )
+        return True
+
+    async def _send_result(self, entry, outcome, trace_id, error) -> None:
         await self._client.send(
             CommandResultEnvelope(
                 **without_none(
@@ -142,8 +171,8 @@ class CommandDispatcher:
                     session=self._client.session,
                     seq=self._client.next_seq(),
                     ts=now(self._client.clock),
-                    trace_id=command.trace_id,
-                    span_id=command.span_id,
+                    trace_id=trace_id,
+                    span_id=entry.span_id,
                     payload=CommandResultPayload(
                         **without_none(
                             status=outcome.status,

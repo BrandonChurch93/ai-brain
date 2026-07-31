@@ -69,7 +69,8 @@
       "Bash(.venv/bin/python -c \"import bodies, brain, wire; print\\('imports OK:', bodies.__name__, brain.__name__, wire.__name__\\)\")",
       "Bash(PYTHONPATH=src uv run python /tmp/brain_run.py)",
       "Bash(awk '{print \"flag:\", $5}')",
-      "Bash(.venv/bin/python -c \"import bodies\")"
+      "Bash(.venv/bin/python -c \"import bodies\")",
+      "Bash(./scripts/drill)"
     ],
     "deny": [
       "Bash(rm -rf *)",

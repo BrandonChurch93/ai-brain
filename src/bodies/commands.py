@@ -112,6 +112,12 @@ class CommandLedger:
         """
         existing = self._spans.get(command.span_id)
         if existing is not None:
+            # Suppressed, and deliberately not answered again. If result
+            # recovery is ever genuinely needed, the answer is an additive
+            # span-status query message with its own ADR, never an idempotent
+            # re-send carved out of the exactly-one-terminal-result rule. One
+            # exception to that rule and a brain can no longer tell which
+            # outcome was real.
             log.info(
                 "span %s already seen (%s/%s, %s); not executing again",
                 command.span_id,

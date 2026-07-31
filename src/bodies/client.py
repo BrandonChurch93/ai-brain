@@ -24,6 +24,9 @@ from websockets.asyncio.client import ClientConnection, connect
 
 from wire import (
     SUBPROTOCOL,
+    EstopClearEnvelope,
+    EstopEnvelope,
+    EstopPayload,
     EventEnvelope,
     EventPayload,
     HeartbeatEnvelope,
@@ -41,6 +44,7 @@ from wire import (
     encode,
 )
 from wire.clock import SYSTEM_CLOCK, Clock
+from wire.lease import LeaseWatch
 from wire.models import without_none
 from wire.schema import supported_versions
 from wire.stamp import SeqCounter, new_id, now
@@ -97,12 +101,15 @@ class BodyClient:
         config: BodyConfig,
         *,
         on_message: MessageHandler | None = None,
+        on_priority: MessageHandler | None = None,
+        state: str | None = None,
         clock: Clock = SYSTEM_CLOCK,
         sleep: Sleeper = asyncio.sleep,
     ) -> None:
         self._manifest = manifest
         self._config = config
         self._on_message = on_message
+        self._on_priority = on_priority
         self._clock = clock
         self._sleep = sleep
 
@@ -112,7 +119,10 @@ class BodyClient:
         self._protocol_version: str | None = None
         self._interval_ms: int | None = None
         self._lease_ms: int | None = None
-        self._state: str = manifest.boot_state
+        # Passed in when the adapter owns a latched state that outlives
+        # this client. A reconnect must not reset it (SPEC section 8.2).
+        self._state: str = state if state is not None else manifest.boot_state
+        self._brain_lease: LeaseWatch | None = None
         self._tasks: list[asyncio.Task[Any]] = []
 
     # What the body knows about itself
@@ -152,6 +162,19 @@ class BodyClient:
     @property
     def clock(self) -> Clock:
         return self._clock
+
+    @property
+    def brain_lease(self) -> LeaseWatch | None:
+        """The body's lease on the brain, armed once `welcome` names it."""
+        return self._brain_lease
+
+    def set_state(self, state: str) -> None:
+        """Adopt a state decided elsewhere, without announcing it.
+
+        The adapter owns the latched state; this only keeps the value the
+        heartbeat reports in step with it.
+        """
+        self._state = state
 
     def next_seq(self) -> int:
         """Take the next outbound sequence number (SPEC section 4)."""
@@ -196,6 +219,10 @@ class BodyClient:
         self._interval_ms = reply.payload.heartbeat.interval_ms
         self._lease_ms = reply.payload.heartbeat.lease_ms
 
+        # The body holds a lease on the brain too, on the terms the brain
+        # just named (SPEC section 8.1).
+        self._brain_lease = LeaseWatch(self._lease_ms, self._clock)
+
         log.info(
             "body %s: session %s open on protocol %s",
             self.body_id,
@@ -213,6 +240,21 @@ class BodyClient:
         body's state until something else happened to reveal it.
         """
         await self.emit_state(self._state, cause="boot")
+
+    async def emit_estop(self, reason: str) -> None:
+        """Report a locally triggered stop (SPEC section 6.9)."""
+        await self._send(
+            EstopEnvelope(
+                **without_none(
+                    type="estop",
+                    id=new_id(),
+                    session=self._session,
+                    seq=self._seq.take(),
+                    ts=now(self._clock),
+                    payload=EstopPayload(reason=reason),
+                )
+            )
+        )
 
     async def emit_state(self, state: str, *, cause: str) -> None:
         """Announce a body-state transition (SPEC section 6.5)."""
@@ -345,6 +387,17 @@ class BodyClient:
                 except (MalformedFrameError, ProtocolValidationError) as exc:
                     log.warning("body %s: invalid message from brain: %s", self.body_id, exc)
                     continue
+
+                # SPEC section 8.3: E-stop is acted on immediately upon
+                # parse, ahead of any queued work. Handled before the general
+                # dispatch so it cannot sit behind a command in this loop.
+                if isinstance(message, EstopEnvelope | EstopClearEnvelope):
+                    if self._on_priority is not None:
+                        await self._on_priority(self, message, received_at)
+                    continue
+
+                if isinstance(message, HeartbeatEnvelope) and self._brain_lease is not None:
+                    self._brain_lease.beat()
 
                 if self._on_message is not None:
                     await self._on_message(self, message, received_at)

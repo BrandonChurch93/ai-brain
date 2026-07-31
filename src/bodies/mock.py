@@ -21,9 +21,17 @@ import os
 from dataclasses import dataclass
 
 from bodies.client import BodyClient, BodyConfig, Sleeper
-from bodies.commands import CommandLedger, Outcome, rejected, succeeded
+from bodies.commands import FAILED, CommandLedger, Outcome, rejected, succeeded
 from bodies.dispatch import CommandDispatcher
-from wire import CommandEnvelope, Manifest, Message, Timestamp
+from bodies.safety import LATCHED_SAFE_STATE, SafetyState
+from wire import (
+    CommandEnvelope,
+    EstopClearEnvelope,
+    EstopEnvelope,
+    Manifest,
+    Message,
+    Timestamp,
+)
 from wire.clock import SYSTEM_CLOCK, Clock
 
 log = logging.getLogger("bodies.mock")
@@ -35,6 +43,10 @@ DEFAULT_URL = "ws://127.0.0.1:8765"
 #: telemetry as JSON, and sustained high rates are the reserved binary seam,
 #: not a v1 feature (SPEC section 6.5).
 DEFAULT_TELEMETRY_MS = 500
+
+#: Capability classes that can move something. Spans on these are the ones a
+#: latch must fail (SPEC section 8.1, "in-flight actuation spans").
+ACTUATING_CLASSES = frozenset({"differential_drive"})
 
 #: Bounds the brain's validator grounds `set_velocity` against (ADR-0004).
 MAX_LINEAR_MPS = 0.4
@@ -131,10 +143,24 @@ class MockBody:
         self._pose = Pose()
         self._ticks = 0
 
+        manifest = mock_manifest(body_id)
+
+        # Owned here, not by the client: a reconnect builds a new client and
+        # must not clear a latch (SPEC section 8.2).
+        self.safety = SafetyState(manifest.boot_state)
+
+        self._actuating = {
+            capability.id
+            for capability in manifest.capabilities
+            if capability.capability_class in ACTUATING_CLASSES
+        }
+
         self.client = BodyClient(
-            mock_manifest(body_id),
+            manifest,
             config,
             on_message=self._on_message,
+            on_priority=self._on_priority,
+            state=self.safety.state.value,
             clock=clock,
             sleep=sleep,
         )
@@ -161,6 +187,112 @@ class MockBody:
         if isinstance(message, CommandEnvelope):
             await self.dispatch.handle(message, received_at)
 
+    async def _on_priority(
+        self, client: BodyClient, message: Message, received_at: Timestamp
+    ) -> None:
+        """E-stop and its release, handled ahead of queued work (section 8.3)."""
+        if isinstance(message, EstopEnvelope):
+            await self.estop(message.payload.reason)
+        elif isinstance(message, EstopClearEnvelope):
+            await self.clear_estop(message.payload.reason, message.payload.operator)
+
+    # Safety transitions
+
+    async def _announce(self, transition) -> None:
+        """Put a state change on the wire, if it was a change.
+
+        Best effort on purpose. The state has already changed locally by the
+        time this runs, and the commonest reason to be latching at all is
+        that the socket just died. A body that could not stop without a
+        working network would be exactly backwards.
+        """
+        self.client.set_state(self.safety.state.value)
+        if not transition.changed:
+            return
+
+        try:
+            await self.client.emit_state(self.safety.state.value, cause=transition.cause)
+        except Exception as exc:
+            log.warning(
+                "body %s: latched %s but could not announce it: %s",
+                self.client.body_id,
+                self.safety.state.value,
+                exc,
+            )
+
+    async def estop(self, reason: str) -> None:
+        """Cease actuation, latch, fail in-flight spans, announce (section 8.3).
+
+        In that order. Stopping and latching are local and unconditional;
+        announcing is the only part that needs a network, so it goes last.
+        """
+        self._pose.stop()
+        transition = self.safety.estop(reason)
+        await self._fail_actuation_spans(LATCHED_SAFE_STATE, f"estopped: {reason}")
+        await self._announce(transition)
+
+    async def clear_estop(self, reason: str, operator: str) -> None:
+        """Release the E-stop into safe_hold, never straight into motion."""
+        transition = self.safety.clear_estop(f"estop_clear by {operator}: {reason}")
+        await self._announce(transition)
+
+    async def enter_safe_hold(self, cause: str) -> None:
+        """Latch safe_hold and stop, failing anything mid-actuation.
+
+        Local work first, announcement last, for the same reason as `estop`.
+        """
+        self._pose.stop()
+        transition = self.safety.enter_safe_hold(cause)
+        if transition.changed:
+            await self._fail_actuation_spans(LATCHED_SAFE_STATE, cause)
+        await self._announce(transition)
+
+    async def _fail_actuation_spans(self, code: str, message: str) -> None:
+        """End every in-flight actuation span (SPEC section 8.1).
+
+        Only actuation spans. A range read that happens to be in flight when
+        the body latches is not dangerous and its result is still true.
+        """
+        for entry in self.ledger.outstanding():
+            if entry.capability not in self._actuating:
+                continue
+            await self.dispatch.finish_span(
+                entry, Outcome(status=FAILED, code=code, message=message)
+            )
+
+    async def watch_brain_lease(self) -> None:
+        """Latch safe_hold if the brain goes quiet for lease_ms (section 8.1)."""
+        lease = self.client.brain_lease
+        if lease is None:
+            return
+
+        interval_s = (self.client.heartbeat_interval_ms or 1000) / 1000
+        latched = False
+
+        while True:
+            await self._sleep(interval_s)
+
+            if lease.expired:
+                if not latched:
+                    latched = True
+                    log.warning(
+                        "body %s: no brain heartbeat for %.0fms; latching safe_hold",
+                        self.client.body_id,
+                        lease.silent_ms,
+                    )
+                    # Nothing raised here may end this loop. A watchdog that
+                    # dies on the first fault it sees is worse than none.
+                    try:
+                        await self.enter_safe_hold(
+                            f"brain heartbeat lease missed after {lease.silent_ms:.0f}ms"
+                        )
+                    except Exception:
+                        log.exception("body %s: latching raised", self.client.body_id)
+            else:
+                # The brain came back. The latch does not lift: only an
+                # explicit clear_safe_hold does that (SPEC section 8.2).
+                latched = False
+
     # Handlers
 
     def _ping(self, command: CommandEnvelope) -> Outcome:
@@ -169,16 +301,17 @@ class MockBody:
     async def _clear_safe_hold(self, command: CommandEnvelope) -> Outcome:
         """Release a latched safe_hold (SPEC section 8.2).
 
-        The latching rules that decide when this is allowed to succeed are
-        checklist step 3.3. It exists now because the manifest declares it,
-        and a declared action that does nothing is worse than one that is
-        not declared at all.
+        The only way out of `safe_hold`. Refused while estopped, because
+        each latch clears through its own path and clearing the milder one
+        must not release the stronger.
         """
-        if self.client.state == "ok":
-            return succeeded(state="ok", changed=False)
+        transition = self.safety.clear_safe_hold()
+        await self._announce(transition)
 
-        await self.client.emit_state("ok", cause="clear_safe_hold")
-        return succeeded(state="ok", changed=True)
+        if not transition.ok:
+            return rejected(LATCHED_SAFE_STATE, transition.refused or "refused")
+
+        return succeeded(state=self.safety.state.value, changed=transition.changed)
 
     async def _set_velocity(self, command: CommandEnvelope) -> Outcome:
         params = command.payload.params
@@ -188,6 +321,14 @@ class MockBody:
         # The brain's validator grounds these against the manifest before
         # sending (ADR-0004). The body checks anyway: SPEC section 6.6 says
         # the body still enforces its own checks and MAY reject.
+        # SPEC section 8.4: motion is permissioned, and a latched body is
+        # not permitted, whatever the command says.
+        if not self.safety.may_actuate:
+            return rejected(
+                LATCHED_SAFE_STATE,
+                f"body is {self.safety.state.value}; actuation refused",
+            )
+
         if abs(linear) > MAX_LINEAR_MPS or abs(angular) > MAX_ANGULAR_RPS:
             return rejected(
                 "invalid_params",
@@ -199,6 +340,7 @@ class MockBody:
         return succeeded(linear_mps=linear, angular_rps=angular)
 
     def _stop(self, command: CommandEnvelope) -> Outcome:
+        """Always allowed. Stopping is never the unsafe direction."""
         self._pose.stop()
         return succeeded(stopped=True)
 
@@ -211,18 +353,22 @@ class MockBody:
 
     @property
     def state(self) -> str:
-        return self.client.state
+        return self.safety.state.value
 
     async def run(self) -> None:
         """Connect, announce the state booted into, then report telemetry."""
         await self.client.connect()
         await self.client.announce_boot_state()
 
-        telemetry = asyncio.create_task(self.telemetry_loop())
+        background = [
+            asyncio.create_task(self.telemetry_loop()),
+            asyncio.create_task(self.watch_brain_lease()),
+        ]
         try:
             await self.client.run_loops()
         finally:
-            telemetry.cancel()
+            for task in background:
+                task.cancel()
             await self.client.close()
 
     async def telemetry_loop(self) -> None:

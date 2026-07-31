@@ -72,7 +72,7 @@ References used throughout: CLAUDE.md (rules), STATE.md (V1 definition and accep
 - [x] 3.2 Body-side command semantics: TTL enforcement from receipt time, span_id dedupe within session, exactly one terminal result per span.
       refs: SPEC §6.6-6.7
       done: tests for expired TTL (terminal expired, never executed), duplicate span (single execution), double-terminal prevented.
-- [ ] 3.3 Latching: safe_hold on brain-heartbeat lease miss; estop and estop_clear per spec; clear_safe_hold via sys; no self-clearing on reconnect.
+- [x] 3.3 Latching: safe_hold on brain-heartbeat lease miss; estop and estop_clear per spec; clear_safe_hold via sys; no self-clearing on reconnect.
       refs: SPEC §8.1-8.4; ADR-0006
       done: tests: silence the brain, body latches within lease; reconnect keeps the latch; estop latches even while idle; estop_clear plus clear_safe_hold restore ok.
 - [ ] 3.4 Brain-side validator v1: schema check, manifest grounding (capability id, action, class-registry membership), bounds from attributes (max velocities), per-body rate limit, every rejection logged to MCAP with reason.

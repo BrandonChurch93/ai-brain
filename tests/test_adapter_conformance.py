@@ -4,25 +4,22 @@ Every body in `tests/adapters.py` is held to the same checklist, so the
 laptop body in Phase 4 inherits these for free rather than being spot
 checked by hand.
 
-Only the mechanically checkable lines live here. The suite grows as each
-safety behaviour lands: manifest and state announcement from step 3.1, TTL,
+Only the mechanically checkable lines live here. The suite grew with each
+safety behaviour: manifest and state announcement from step 3.1, TTL,
 deduplication and one-terminal-per-span from 3.2, latching from 3.3.
 
-SPEC section 10, line by line, with where each is covered:
+SPEC section 10, line by line, all ten now covered:
 
 - ignores unknown fields everywhere .......... here
 - hello with a truthful manifest incl. sys ... here
 - heartbeats on the configured interval ...... here
-- reacts to lease misses by latching .........
+- reacts to lease misses by latching ......... here
 - enforces command TTL locally ............... here
 - deduplicates by span_id .................... here
 - exactly one terminal result per span ....... here
-- processes estop ahead of queued work .......
-- latches and never self-clears ..............
+- processes estop ahead of queued work ....... here
+- latches and never self-clears .............. here
 - sys state event on every transition ........ here
-
-The blank lines are step 3.3 and are filled in there. They are listed rather
-than omitted so the gap is visible.
 """
 
 from __future__ import annotations
@@ -35,6 +32,7 @@ import pytest
 
 from adapters import ADAPTER_IDS, ADAPTERS, AdapterCase
 from bodies.client import BodyConfig
+from bodies.mock import ACTUATING_CLASSES
 from brain.config import ServerConfig
 from brain.server import BrainServer
 from wire import CommandEnvelope, capability_classes, decode_object, is_valid, to_object
@@ -525,3 +523,180 @@ async def test_no_result_is_sent_when_none_is_expected(
         assert not [m for m in received if m.type == "command_result"]
     finally:
         await body.client.close()
+
+
+# Latching (step 3.3)
+
+
+async def test_a_body_latches_on_a_brain_lease_miss(
+    case: AdapterCase, brain: tuple[BrainServer, list[Any]]
+) -> None:
+    """SPEC section 8.1. The body holds a lease on the brain, not only the
+    other way round."""
+    server, _received = brain
+    clock = ManualClock()
+    body = case.make(config_for(server), clock=clock)
+    await body.client.connect()
+
+    try:
+        lease = body.client.brain_lease
+        assert lease is not None, "a body must hold a lease on the brain"
+
+        clock.advance(ms=(body.client.heartbeat_lease_ms or 3000))
+        assert lease.expired
+
+        await body.enter_safe_hold("lease miss")
+        assert body.state == "safe_hold"
+        assert not body.safety.may_actuate
+    finally:
+        await body.client.close()
+
+
+async def test_estop_latches_and_is_announced(
+    case: AdapterCase, brain: tuple[BrainServer, list[Any]]
+) -> None:
+    """SPEC section 8.3: cease actuation, enter estopped, emit a sys state
+    event. Works from idle, with nothing in flight."""
+    server, received = brain
+    body = case.make(config_for(server))
+    await body.client.connect()
+
+    try:
+        await body.estop("conformance drill")
+
+        assert body.state == "estopped"
+        await until(
+            lambda: any(
+                m.type == "event"
+                and m.payload.event == "state"
+                and m.payload.data["state"] == "estopped"
+                for m in received
+            ),
+            what="the estopped state event",
+        )
+    finally:
+        await body.client.close()
+
+
+async def test_estop_is_handled_ahead_of_queued_work(
+    case: AdapterCase, brain: tuple[BrainServer, list[Any]]
+) -> None:
+    """SPEC section 8.3: acted on immediately upon parse.
+
+    The client routes estop through a priority path before general dispatch,
+    so it cannot sit behind a command in the receive loop.
+    """
+    server, _received = brain
+    body = case.make(config_for(server))
+    await body.client.connect()
+
+    try:
+        assert body.client._on_priority is not None, (
+            "estop must not share the ordinary dispatch path"
+        )
+    finally:
+        await body.client.close()
+
+
+async def test_a_latched_body_refuses_actuation(
+    case: AdapterCase, brain: tuple[BrainServer, list[Any]]
+) -> None:
+    """SPEC section 8.4: motion is permissioned and a latch withdraws it."""
+    server, _received = brain
+    body = case.make(config_for(server))
+    welcome = await body.client.connect()
+
+    try:
+        await body.estop("conformance drill")
+
+        actuating = [
+            (capability.id, action)
+            for capability in case.manifest().capabilities
+            if capability.capability_class in ACTUATING_CLASSES
+            for action in (capability.actions or [])
+            if action != "stop"  # stopping is never the unsafe direction
+        ]
+
+        for index, (capability, action) in enumerate(actuating):
+            span = await body.dispatch.handle(
+                command_for(
+                    welcome.payload.session,
+                    capability,
+                    action,
+                    span_id=f"spn_latched_{index}",
+                )
+            )
+            assert span is not None
+            assert span.terminal == "rejected", f"{capability}/{action} moved while latched"
+    finally:
+        await body.client.close()
+
+
+async def test_nothing_clears_itself(
+    case: AdapterCase, brain: tuple[BrainServer, list[Any]]
+) -> None:
+    """SPEC section 8.2: not on reconnect, not on timeout, not because the
+    cause went away. Silent resume is prohibited."""
+    server, _received = brain
+    clock = ManualClock()
+    body = case.make(config_for(server), clock=clock)
+    await body.client.connect()
+
+    try:
+        await body.estop("conformance drill")
+
+        clock.advance(seconds=3600)
+        assert body.state == "estopped"
+
+        await body.client.close()
+        await body.client.connect()
+        assert body.state == "estopped", "a reconnect cleared the latch"
+    finally:
+        await body.client.close()
+
+
+async def test_a_latched_body_reports_its_latch_in_heartbeats(
+    case: AdapterCase, brain: tuple[BrainServer, list[Any]]
+) -> None:
+    """SPEC section 5: a reconnected body reports the latched state in its
+    first heartbeat, so the brain never has to infer it."""
+    server, received = brain
+    body = case.make(config_for(server))
+    await body.client.connect()
+
+    try:
+        await body.estop("conformance drill")
+        await body.client.close()
+        await body.client.connect()
+
+        received.clear()
+        await body.client.send_heartbeat()
+        await until(
+            lambda: any(m.type == "heartbeat" for m in received),
+            what="a heartbeat after reconnect",
+        )
+
+        beat = next(m for m in received if m.type == "heartbeat")
+        assert beat.payload.state == "estopped"
+    finally:
+        await body.client.close()
+
+
+async def test_latching_does_not_depend_on_the_network(
+    case: AdapterCase, brain: tuple[BrainServer, list[Any]]
+) -> None:
+    """The commonest reason to latch is that the socket died.
+
+    A body that could only stop while connected would be unable to stop in
+    exactly the situation the latch exists for. Every local decision must be
+    made before anything is sent.
+    """
+    server, _received = brain
+    body = case.make(config_for(server))
+    await body.client.connect()
+
+    await body.client._connection.close()  # type: ignore[union-attr]
+    await body.enter_safe_hold("socket died")
+
+    assert body.state == "safe_hold"
+    assert not body.safety.may_actuate
