@@ -88,7 +88,7 @@ References used throughout: CLAUDE.md (rules), STATE.md (V1 definition and accep
       done: snapshot round trip lands in MCAP and decodes to a valid image in a test.
 - [x] 4.2 Microphone capability: push-to-talk capture (`sounddevice`), `audio_chunk` events with declared sample rate and encoding.
       done: captured clip round-trips and plays back.
-- [ ] 4.3 Speaker capability: `say` via macOS `say` for now (manifest declares `tts: local`); Kokoro replaces it in Phase 6.
+- [x] 4.3 Speaker capability: `say` via macOS `say` for now (manifest declares `tts: local`); Kokoro replaces it in Phase 6.
       done: say command produces audio and a terminal succeeded result.
 - [ ] 4.4 The Viam test: connect the laptop body against a brain untouched since Gate 3. Record the brain-side git diff since Gate 3; it must contain no changes outside `bodies/`.
       refs: ADR-0001, ADR-0003; STATE.md capability 3

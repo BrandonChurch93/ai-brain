@@ -35,6 +35,17 @@ FAILED = "failed"
 EXPIRED = "expired"
 REJECTED = "rejected"
 
+#: Non-terminal statuses, repeatable while a span is open (SPEC section 6.7).
+ACCEPTED = "accepted"
+RUNNING = "running"
+
+#: Error code for a span cut short by something else, such as a spoken
+#: sentence stopped part way. The terminal status set is closed and has no
+#: cancellation, so the honest terminal is `failed`: the span did not achieve
+#: what it set out to do. The code is what separates being interrupted from
+#: breaking, and barge-in is normal rather than a fault.
+INTERRUPTED = "interrupted"
+
 
 @dataclass(frozen=True, slots=True)
 class Outcome:
@@ -60,6 +71,11 @@ def failed(code: str, message: str) -> Outcome:
 
 def rejected(code: str, message: str) -> Outcome:
     return Outcome(status=REJECTED, code=code, message=message)
+
+
+def interrupted(message: str) -> Outcome:
+    """A span cut short by something else, such as barge-in."""
+    return Outcome(status=FAILED, code=INTERRUPTED, message=message)
 
 
 @dataclass(slots=True)
@@ -186,4 +202,9 @@ class CommandLedger:
 
 
 #: What an adapter provides per (capability, action).
-Handler = Callable[[CommandEnvelope], Awaitable[Outcome] | Outcome]
+#:
+#: Returning `None` defers the span: the action has begun and has not
+#: finished, and the handler will close it later through
+#: `CommandDispatcher.finish_span`. A TTL governs beginning, not duration
+#: (SPEC section 6.6), so a long action is not a late one.
+Handler = Callable[[CommandEnvelope], Awaitable[Outcome | None] | Outcome | None]

@@ -4,6 +4,12 @@ The order of checks is the safety property. Deduplicate first, then expire,
 then execute: a retransmitted command must not run twice even if it is still
 within its TTL, and an expired command must not run at all even if it is the
 first time it has been seen.
+
+A handler that returns `None` keeps its span open. Some actions finish long
+after they begin, and a TTL governs beginning rather than duration
+(SPEC section 6.6), so a spoken sentence reports `running` when playback
+starts and ends `succeeded` when it stops. Whoever deferred the span owns
+closing it, through `finish_span`.
 """
 
 from __future__ import annotations
@@ -27,6 +33,7 @@ from wire import (
     ErrorDetail,
     without_none,
 )
+from wire.models import TERMINAL_STATUSES
 from wire.stamp import new_id, now
 
 log = logging.getLogger("bodies.dispatch")
@@ -97,8 +104,42 @@ class CommandDispatcher:
             log.exception("span %s (%s/%s) raised", entry.span_id, entry.capability, entry.action)
             outcome = Outcome(status="failed", code="internal", message=str(exc))
 
+        if outcome is None:
+            # Deferred. The handler started something that has not finished,
+            # and will end the span itself when it does.
+            return entry
+
         await self._finish(command, entry, outcome)
         return entry
+
+    async def report(
+        self,
+        entry: SpanEntry,
+        status: str,
+        *,
+        progress: float | None = None,
+        **data: object,
+    ) -> None:
+        """Send a non-terminal result: `accepted` or `running`.
+
+        Repeatable, and it does not close the span (SPEC section 6.7). A
+        deferred action uses this to say it has begun, which is what tells
+        the brain the difference between slow and stuck.
+        """
+        if status in TERMINAL_STATUSES:
+            raise ValueError(f"{status!r} is terminal; use finish_span")
+
+        if entry.is_terminal or not entry.expects_result:
+            return
+
+        await self._send_result(
+            entry,
+            status=status,
+            trace_id=entry.trace_id,
+            progress=progress,
+            data=dict(data),
+            error=None,
+        )
 
     def _no_handler(self, entry: SpanEntry) -> Outcome:
         """Refuse cleanly, naming which half was wrong.
@@ -152,7 +193,14 @@ class CommandDispatcher:
         # network may refuse, and a body that latched because the socket died
         # must not fail to end its spans for want of that same socket.
         try:
-            await self._send_result(entry, outcome, trace_id, error)
+            await self._send_result(
+                entry,
+                status=outcome.status,
+                trace_id=trace_id,
+                progress=1.0,
+                data=outcome.data,
+                error=error,
+            )
         except Exception as exc:
             log.warning(
                 "span %s ended %s but the result could not be sent: %s",
@@ -162,7 +210,16 @@ class CommandDispatcher:
             )
         return True
 
-    async def _send_result(self, entry, outcome, trace_id, error) -> None:
+    async def _send_result(
+        self,
+        entry: SpanEntry,
+        *,
+        status: str,
+        trace_id: str | None,
+        progress: float | None,
+        data: dict[str, object] | None,
+        error: ErrorDetail | None,
+    ) -> None:
         await self._client.send(
             CommandResultEnvelope(
                 **without_none(
@@ -175,9 +232,9 @@ class CommandDispatcher:
                     span_id=entry.span_id,
                     payload=CommandResultPayload(
                         **without_none(
-                            status=outcome.status,
-                            progress=1.0,
-                            data=outcome.data,
+                            status=status,
+                            progress=progress,
+                            data=data,
                             error=error,
                         )
                     ),

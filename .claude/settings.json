@@ -74,7 +74,8 @@
       "Bash(PYTHONPATH=src uv run python -)",
       "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('opencv-python:', d['info']['version']\\)\")",
       "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('pillow:', d['info']['version']\\)\")",
-      "Bash(uv run python -c ' *)"
+      "Bash(uv run python -c ' *)",
+      "Bash(BRAIN_SPEAKER_TESTS=1 uv run pytest -m speaker -q)"
     ],
     "deny": [
       "Bash(rm -rf *)",

@@ -1,7 +1,7 @@
 # Runbook: the laptop body
 
-The machine you are sitting at, presented to the brain as a body. Camera and
-microphone today; the speaker follows in checklist step 4.3.
+The machine you are sitting at, presented to the brain as a body: camera,
+microphone, and speaker.
 
 ## Running it
 
@@ -79,13 +79,28 @@ The tests that use real hardware are skipped unless asked for:
 BRAIN_CAMERA_TESTS=1 uv run pytest -m camera
 ```
 
+The speaker needs no permission and no extra dependency, but it does make
+noise. To hear it for yourself:
+
+```
+PYTHONPATH=src uv run python -c "
+import asyncio
+from bodies.speech import MacSaySpeaker
+async def main():
+    s = MacSaySpeaker(); s.open()
+    await s.start('the body can speak')
+    await s.wait()
+asyncio.run(main())
+"
+```
+
 Run them after granting the permissions. The first run may still show a
 dialog if the terminal you are in has not asked before.
 
 ## What the body does
 
-- Declares `sys`, plus `cam0` and `mic0` for whichever devices opened, and
-  boots into `ok`. Neither a camera nor a microphone is actuation as SPEC
+- Declares `sys`, plus `cam0`, `mic0` and `spk0` for whichever devices
+  opened, and boots into `ok`. Neither a camera nor a microphone is actuation as SPEC
   section 7.1 defines it, and a hold protecting nothing would be cleared by
   rote at the start of every session.
 - Declares `snapshot` alone. `start_stream` and `stop_stream` are in the
@@ -113,9 +128,27 @@ dialog if the terminal you are in has not asked before.
   mono and it may give 48 kHz stereo. Both do so silently. The manifest
   reports what came back, so the log will not always match the defaults in
   the code, and that is correct.
-- Honours E-stop. A camera cannot hurt anyone, but a body that ignored a
-  global stop would report `ok` while everything else was stopped, which is
-  worse than useless in a log.
+- On `say`: speaks the text through macOS `say`, and **the span stays open
+  until the sentence finishes**. A TTL governs beginning, not duration, so a
+  say that started is never expired however long it runs. The result flow is
+  `running` when playback starts, then `succeeded` when it ends.
+- On `stop`: genuinely cuts the sentence off mid-word, and the interrupted
+  `say` ends terminal `failed` with code `interrupted`. The closed status set
+  has no cancellation, so `failed` is the honest terminal (the span did not
+  do what it set out to do) and the code is what separates being interrupted
+  from breaking. This is the barge-in primitive step 6.3 builds on.
+- A new `say` interrupts the one before it the same way. Two voices at once
+  is never what was wanted.
+- Emits `playback_state` events on both edges, `started` and `stopped`, each
+  carrying the say's `trace_id`, and `stopped` saying whether it `completed`
+  or was `interrupted`. This is the echo-avoidance hook: a voice loop gates
+  the microphone on these so the body does not transcribe itself. They are
+  not droppable, because a missed `stopped` leaves that loop deaf and
+  unaware.
+- Honours E-stop, which stops the camera, capture, and speech together. A
+  camera cannot hurt anyone, but a body that ignored a global stop would
+  report `ok` while everything else was stopped, which is worse than useless
+  in a log.
 
 ## When something goes wrong
 
@@ -126,6 +159,7 @@ dialog if the terminal you are in has not asked before.
 | `no camera capability` / `no microphone capability` at startup | The device did not open, so it was left out of the manifest. The rest of the line says why. |
 | `opencv-python is not installed` | `uv sync --extra laptop`. |
 | `sounddevice is not installed, or PortAudio is missing` | `uv sync --extra laptop`. |
+| `the macOS \`say\` command is not on PATH` | The speaker is macOS-only in v1. Kokoro replaces it in step 6.2. |
 | `ModuleNotFoundError: bodies` | `PYTHONPATH=src` was not set. See above. |
 | Body connects, then `reject: auth_failed` | `BRAIN_AUTH_TOKEN` differs between the two processes. |
 | Body connects, then nothing | The brain is up but not sending. Check its log; the body is waiting on its lease. |

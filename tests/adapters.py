@@ -16,6 +16,7 @@ from bodies.camera import StubCamera
 from bodies.client import BodyConfig
 from bodies.laptop import DEFAULT_MAX_FPS, LaptopBody, laptop_manifest
 from bodies.mock import MockBody, mock_manifest
+from bodies.speech import StubSpeaker
 from wire import Manifest
 from wire.clock import SYSTEM_CLOCK, Clock
 
@@ -50,9 +51,15 @@ def _stubbed_laptop(config: BodyConfig, **kwargs: Any) -> Adapter:
 
     The adapter under test is the real one. Only the hardware behind it is
     replaced, so CI exercises every line of the body without a camera, a
-    microphone, or a permission prompt nobody is there to answer.
+    microphone, a speaker, or a permission prompt nobody is there to answer.
     """
-    return LaptopBody(config, camera=StubCamera(), microphone=StubMicrophone(), **kwargs)
+    return LaptopBody(
+        config,
+        camera=StubCamera(),
+        microphone=StubMicrophone(),
+        speaker=StubSpeaker(),
+        **kwargs,
+    )
 
 
 def _stubbed_laptop_manifest() -> Manifest:
@@ -62,10 +69,11 @@ def _stubbed_laptop_manifest() -> Manifest:
     out here, so the conformance suite compares the body against its own
     devices instead of against a copy that could drift from them.
     """
-    camera, microphone = StubCamera(), StubMicrophone()
+    camera, microphone, speaker = StubCamera(), StubMicrophone(), StubSpeaker()
     return laptop_manifest(
         camera=camera.open().as_attributes(DEFAULT_MAX_FPS),
         microphone=microphone.open().as_attributes(),
+        speaker=speaker.open().as_attributes(),
     )
 
 

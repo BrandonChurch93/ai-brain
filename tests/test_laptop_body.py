@@ -41,16 +41,25 @@ from bodies.camera import (
     stub_frame,
 )
 from bodies.client import BodyConfig
-from bodies.laptop import CAMERA_ID, MICROPHONE_ID, LaptopBody, laptop_manifest
+from bodies.laptop import (
+    CAMERA_ID,
+    MICROPHONE_ID,
+    SPEAKER_ID,
+    LaptopBody,
+    laptop_manifest,
+)
+from bodies.speech import StubSpeaker
 from brain.config import ServerConfig
 from brain.recorder import FlightRecorder
 from brain.server import BrainServer
 from wire import ACTUATING_CLASSES, CommandEnvelope, CommandPayload, without_none
+from wire.clock import ManualClock
 from wire.stamp import new_id, now
 
 TOKEN = "laptop-token"
 
 LIVE_CAMERA = os.environ.get("BRAIN_CAMERA_TESTS") == "1"
+LIVE_SPEAKER = os.environ.get("BRAIN_SPEAKER_TESTS") == "1"
 
 
 @pytest.fixture
@@ -130,6 +139,7 @@ def stub_body(server: BrainServer, **kwargs: Any) -> LaptopBody:
     """A laptop body with both devices stubbed."""
     kwargs.setdefault("camera", StubCamera())
     kwargs.setdefault("microphone", StubMicrophone())
+    kwargs.setdefault("speaker", StubSpeaker())
     return LaptopBody(config_for(server), **kwargs)
 
 
@@ -744,6 +754,322 @@ def _is_audio(message: Any) -> bool:
     return message.type == "event" and message.payload.event == "audio_chunk"
 
 
+# Speaker (step 4.3)
+
+
+def say_command(session: str, text: str, span_id: str = "spn_say", ttl_ms: int = 5000):
+    return CommandEnvelope(
+        **without_none(
+            type="command",
+            id=new_id(),
+            session=session,
+            seq=2,
+            ts=now(),
+            trace_id="trc_speak",
+            span_id=span_id,
+            payload=CommandPayload(
+                capability=SPEAKER_ID,
+                action="say",
+                params={"text": text},
+                ttl_ms=ttl_ms,
+            ),
+        )
+    )
+
+
+def _playback(received: list[Any]) -> list[Any]:
+    return [m for m in received if m.type == "event" and m.payload.event == "playback_state"]
+
+
+def _results(received: list[Any], span_id: str) -> list[Any]:
+    return [m for m in received if m.type == "command_result" and m.span_id == span_id]
+
+
+async def test_say_reports_running_then_succeeded(
+    brain: tuple[BrainServer, list[Any]],
+) -> None:
+    """A TTL governs beginning, not duration (SPEC section 6.6).
+
+    Playback reports `running` as soon as it starts and only ends when the
+    sentence does, however long that takes.
+    """
+    server, received = brain
+    speaker = StubSpeaker()
+    body = stub_body(server, speaker=speaker)
+    welcome = await body.client.connect()
+
+    try:
+        span = await body.dispatch.handle(say_command(welcome.payload.session, "hello"))
+        assert span is not None
+        assert span.terminal is None, "the span must stay open while speaking"
+        assert body.speaking
+
+        await until(
+            lambda: any(r.payload.status == "running" for r in _results(received, "spn_say")),
+            what="the running result",
+        )
+
+        speaker.finish()
+        await until(lambda: span.terminal is not None, what="the sentence to end")
+
+        assert span.terminal == "succeeded"
+        await until(
+            lambda: any(r.payload.status == "succeeded" for r in _results(received, "spn_say")),
+            what="the terminal result to arrive",
+        )
+        statuses = [r.payload.status for r in _results(received, "spn_say")]
+        assert statuses == ["running", "succeeded"]
+    finally:
+        await body.client.close()
+
+
+async def test_a_say_that_started_is_never_expired(
+    brain: tuple[BrainServer, list[Any]],
+) -> None:
+    """The 3.2 ruling, applied to the one action that genuinely runs long.
+
+    The clock runs far past the TTL while the sentence is still going, and
+    the span still ends succeeded.
+    """
+    server, _received = brain
+    clock = ManualClock()
+    speaker = StubSpeaker()
+    body = stub_body(server, speaker=speaker, clock=clock)
+    welcome = await body.client.connect()
+
+    try:
+        span = await body.dispatch.handle(
+            say_command(welcome.payload.session, "a very long sentence", ttl_ms=100)
+        )
+        assert span is not None
+
+        clock.advance(seconds=60)  # far past the TTL, still speaking
+        assert span.terminal is None
+
+        speaker.finish()
+        await until(lambda: span.terminal is not None, what="the sentence to end")
+        assert span.terminal == "succeeded"
+    finally:
+        await body.client.close()
+
+
+async def test_stop_interrupts_playback_and_fails_the_span(
+    brain: tuple[BrainServer, list[Any]],
+) -> None:
+    """The barge-in primitive step 6.3 is built on.
+
+    `stop` cuts the sentence off, and the interrupted say ends terminal
+    `failed` with code `interrupted`: the span did not do what it set out to
+    do, and the code is what separates that from breaking.
+    """
+    server, received = brain
+    speaker = StubSpeaker()
+    body = stub_body(server, speaker=speaker)
+    welcome = await body.client.connect()
+
+    try:
+        span = await body.dispatch.handle(
+            say_command(welcome.payload.session, "a sentence to cut off")
+        )
+        assert span is not None
+        assert body.speaking
+
+        stop = await body.dispatch.handle(
+            command_for(welcome.payload.session, SPEAKER_ID, "stop", "spn_stop")
+        )
+
+        assert stop is not None
+        assert stop.terminal == "succeeded"
+        assert not body.speaking
+        assert speaker.stopped == 1
+
+        assert span.terminal == "failed"
+        await until(
+            lambda: any(r.payload.status == "failed" for r in _results(received, "spn_say")),
+            what="the interrupted result",
+        )
+        result = next(r for r in _results(received, "spn_say") if r.payload.status == "failed")
+        assert result.payload.error is not None
+        assert result.payload.error.code == "interrupted"
+    finally:
+        await body.client.close()
+
+
+async def test_a_new_say_interrupts_the_previous_one(
+    brain: tuple[BrainServer, list[Any]],
+) -> None:
+    """Two voices at once is never what was wanted, and the interrupted span
+    ends properly rather than being abandoned."""
+    server, _received = brain
+    speaker = StubSpeaker()
+    body = stub_body(server, speaker=speaker)
+    welcome = await body.client.connect()
+
+    try:
+        first = await body.dispatch.handle(
+            say_command(welcome.payload.session, "first", span_id="spn_first")
+        )
+        second = await body.dispatch.handle(
+            say_command(welcome.payload.session, "second", span_id="spn_second")
+        )
+
+        assert first is not None and second is not None
+        assert first.terminal == "failed"
+        assert second.terminal is None
+        assert speaker.said == ["first", "second"]
+    finally:
+        await body.client.close()
+
+
+async def test_stopping_when_silent_is_harmless(
+    brain: tuple[BrainServer, list[Any]],
+) -> None:
+    server, _received = brain
+    body = stub_body(server)
+    welcome = await body.client.connect()
+
+    try:
+        stop = await body.dispatch.handle(
+            command_for(welcome.payload.session, SPEAKER_ID, "stop", "spn_stop")
+        )
+        assert stop is not None
+        assert stop.terminal == "succeeded"
+    finally:
+        await body.client.close()
+
+
+async def test_playback_state_is_announced_both_ways(
+    brain: tuple[BrainServer, list[Any]],
+) -> None:
+    """The echo-avoidance hook for step 6.3: a voice loop gates the
+    microphone on these, so both edges have to arrive."""
+    server, received = brain
+    speaker = StubSpeaker()
+    body = stub_body(server, speaker=speaker)
+    welcome = await body.client.connect()
+
+    try:
+        await body.dispatch.handle(say_command(welcome.payload.session, "hello"))
+        await until(lambda: len(_playback(received)) >= 1, what="the started event")
+
+        speaker.finish()
+        await until(lambda: len(_playback(received)) >= 2, what="the stopped event")
+
+        states = [m.payload.data["state"] for m in _playback(received)]
+        assert states == ["started", "stopped"]
+        assert _playback(received)[1].payload.data["reason"] == "completed"
+    finally:
+        await body.client.close()
+
+
+async def test_playback_state_carries_the_says_trace(
+    brain: tuple[BrainServer, list[Any]],
+) -> None:
+    """So a voice loop can tell its own speech from someone else's."""
+    server, received = brain
+    speaker = StubSpeaker()
+    body = stub_body(server, speaker=speaker)
+    welcome = await body.client.connect()
+
+    try:
+        await body.dispatch.handle(say_command(welcome.payload.session, "hello"))
+        await until(lambda: len(_playback(received)) >= 1, what="the started event")
+        assert _playback(received)[0].trace_id == "trc_speak"
+    finally:
+        await body.client.close()
+
+
+async def test_an_interrupted_playback_says_so(
+    brain: tuple[BrainServer, list[Any]],
+) -> None:
+    """`stopped` alone would leave a listener unable to tell a finished
+    sentence from a cut-off one."""
+    server, received = brain
+    speaker = StubSpeaker()
+    body = stub_body(server, speaker=speaker)
+    welcome = await body.client.connect()
+
+    try:
+        await body.dispatch.handle(say_command(welcome.payload.session, "hello"))
+        await until(lambda: len(_playback(received)) >= 1, what="the started event")
+
+        await body.dispatch.handle(
+            command_for(welcome.payload.session, SPEAKER_ID, "stop", "spn_stop")
+        )
+        await until(lambda: len(_playback(received)) >= 2, what="the stopped event")
+
+        assert _playback(received)[1].payload.data["reason"] == "interrupted"
+    finally:
+        await body.client.close()
+
+
+async def test_playback_events_are_not_droppable(
+    brain: tuple[BrainServer, list[Any]],
+) -> None:
+    """A missed `stopped` leaves a voice loop with the microphone gated
+    forever, deaf and unaware."""
+    server, received = brain
+    speaker = StubSpeaker()
+    body = stub_body(server, speaker=speaker)
+    welcome = await body.client.connect()
+
+    try:
+        await body.dispatch.handle(say_command(welcome.payload.session, "hello"))
+        speaker.finish()
+        await until(lambda: len(_playback(received)) >= 2, what="both events")
+        assert all(not m.payload.droppable for m in _playback(received))
+    finally:
+        await body.client.close()
+
+
+async def test_an_empty_say_is_refused(brain: tuple[BrainServer, list[Any]]) -> None:
+    server, _received = brain
+    body = stub_body(server)
+    welcome = await body.client.connect()
+
+    try:
+        span = await body.dispatch.handle(say_command(welcome.payload.session, "   "))
+        assert span is not None
+        assert span.terminal == "failed"
+        assert not body.speaking
+    finally:
+        await body.client.close()
+
+
+async def test_an_estop_cuts_off_speech(brain: tuple[BrainServer, list[Any]]) -> None:
+    """A body told to stop should not still be talking."""
+    server, _received = brain
+    speaker = StubSpeaker()
+    body = stub_body(server, speaker=speaker)
+    welcome = await body.client.connect()
+
+    try:
+        span = await body.dispatch.handle(say_command(welcome.payload.session, "hello"))
+        assert span is not None
+        assert body.speaking
+
+        await body.estop("operator")
+
+        assert not body.speaking
+        assert span.terminal == "failed"
+        assert body.state == "estopped"
+    finally:
+        await body.client.close()
+
+
+def test_the_speaker_declares_local_synthesis() -> None:
+    """SPEC section 7.2: `tts` is `local` or `none`. Kokoro replaces the
+    implementation in 6.2 without changing what this says."""
+    manifest = laptop_manifest(speaker=StubSpeaker().open().as_attributes())
+    speaker = next(c for c in manifest.capabilities if c.id == SPEAKER_ID)
+
+    assert speaker.capability_class == "speaker"
+    assert speaker.attributes is not None
+    assert speaker.attributes["tts"] == "local"
+    assert speaker.actions == ["say", "stop"]
+    assert speaker.events == ["playback_state"]
+
+
 # Local only
 
 
@@ -771,3 +1097,35 @@ async def test_a_real_camera_produces_a_decodable_frame() -> None:
     assert image.format == "JPEG"
     assert frame.width > 0 and frame.height > 0
     assert isinstance(frame, Frame)
+
+
+@pytest.mark.speaker
+@pytest.mark.skipif(not LIVE_SPEAKER, reason="set BRAIN_SPEAKER_TESTS=1 to make noise")
+async def test_the_real_synthesiser_speaks_and_can_be_cut_off() -> None:
+    """The only test that makes a sound.
+
+    Interruption is the half worth proving against the real thing: a stub can
+    always claim it stopped, and what barge-in needs is a sentence genuinely
+    cut off mid-word. A `say` that ignored `stop` would look identical in
+    every other test in this file.
+    """
+    import time
+
+    from bodies.speech import MacSaySpeaker
+
+    speaker = MacSaySpeaker(rate=300)
+    speaker.open()
+
+    try:
+        await speaker.start("testing one two three")
+        assert await speaker.wait() is True
+
+        started = time.monotonic()
+        await speaker.start("this sentence is going to be cut off well before it finishes entirely")
+        await asyncio.sleep(0.3)
+        await speaker.stop()
+
+        assert await speaker.wait() is False
+        assert time.monotonic() - started < 1.0, "stop did not actually interrupt"
+    finally:
+        speaker.close()

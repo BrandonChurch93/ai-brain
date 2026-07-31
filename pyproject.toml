@@ -54,6 +54,7 @@ addopts = "-q --strict-markers"
 markers = [
     "slow: consumes real wall-clock time; the suite keeps at most one",
     "camera: needs a real camera and a granted macOS permission; local only",
+    "speaker: makes audible noise through the real synthesiser; local only",
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
