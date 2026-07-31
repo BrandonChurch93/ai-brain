@@ -75,7 +75,10 @@
       "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('opencv-python:', d['info']['version']\\)\")",
       "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('pillow:', d['info']['version']\\)\")",
       "Bash(uv run python -c ' *)",
-      "Bash(BRAIN_SPEAKER_TESTS=1 uv run pytest -m speaker -q)"
+      "Bash(BRAIN_SPEAKER_TESTS=1 uv run pytest -m speaker -q)",
+      "Bash(git worktree *)",
+      "Bash(git -C /tmp/gate3-brain log --oneline -1)",
+      "Bash(./scripts/viam_test)"
     ],
     "deny": [
       "Bash(rm -rf *)",

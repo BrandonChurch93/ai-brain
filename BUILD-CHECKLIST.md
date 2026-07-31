@@ -90,7 +90,7 @@ References used throughout: CLAUDE.md (rules), STATE.md (V1 definition and accep
       done: captured clip round-trips and plays back.
 - [x] 4.3 Speaker capability: `say` via macOS `say` for now (manifest declares `tts: local`); Kokoro replaces it in Phase 6.
       done: say command produces audio and a terminal succeeded result.
-- [ ] 4.4 The Viam test: connect the laptop body against a brain untouched since Gate 3. Record the brain-side git diff since Gate 3; it must contain no changes outside `bodies/`.
+- [x] 4.4 The Viam test: connect the laptop body against a brain untouched since Gate 3. Record the brain-side git diff since Gate 3; it must contain no changes outside `bodies/`.
       refs: ADR-0001, ADR-0003; STATE.md capability 3
       done: assertion documented in the PR description with the diff.
 

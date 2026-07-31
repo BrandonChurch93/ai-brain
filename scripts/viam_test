@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# The Viam test (checklist step 4.4): the current laptop body against a brain
+# from before it existed. One command, no arguments.
+set -uo pipefail
+
+cd "$(dirname "$0")/.."
+
+GATE3="${GATE3_COMMIT:-e8f05e3}"
+WORKTREE="${WORKTREE:-/tmp/gate3-brain}"
+
+if [ ! -d "$WORKTREE" ]; then
+  git worktree add "$WORKTREE" "$GATE3" >/dev/null
+fi
+
+echo "brain: $(git -C "$WORKTREE" log --oneline -1)"
+echo "body:  $(git log --oneline -1)"
+echo
+
+export BRAIN_AUTH_TOKEN=viam-test
+export BRAIN_PORT=8802
+export BRAIN_URL=ws://127.0.0.1:8802
+
+PYTHONPATH="$WORKTREE/src" uv run python scripts/viam_brain.py &
+BRAIN=$!
+sleep 2
+
+PYTHONPATH=src uv run python scripts/viam_body.py &
+BODY=$!
+
+wait $BRAIN
+STATUS=$?
+kill $BODY 2>/dev/null
+exit $STATUS

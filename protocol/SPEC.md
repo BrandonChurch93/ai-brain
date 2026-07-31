@@ -170,6 +170,8 @@ Rules:
 
 Statuses: non-terminal `accepted`, `running` (repeatable, with `progress` 0..1); terminal `succeeded`, `failed`, `expired`, `rejected` (exactly one terminal result per span, echoing the command's `span_id` and `trace_id`). `error` carries `{ "code", "message" }` on `failed` and `rejected`.
 
+Standard result error code: **`interrupted`**, on a `failed` result, for a long-running action stopped or displaced before completion (a spoken sentence cut off, an action superseded by a later one). The terminal set has no cancellation status by design, so this is how a body says "not a fault, but it did not finish". Bodies use this code rather than inventing synonyms.
+
 ### 6.8 `list_capabilities` payload
 
 `{}`. Body replies with a `manifest` message.
