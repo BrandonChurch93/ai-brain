@@ -20,6 +20,8 @@ import logging
 from dataclasses import dataclass
 from typing import Protocol
 
+from bodies.permissions import tcc_message
+
 log = logging.getLogger("bodies.camera")
 
 #: Modest by design (SPEC section 6.5): v1 carries media as base64 inside
@@ -51,6 +53,28 @@ class CameraDependencyError(CameraError):
 
 
 @dataclass(frozen=True, slots=True)
+class FrameFormat:
+    """What a device actually opened at.
+
+    Never what was requested. Webcams substitute resolutions freely, and a
+    manifest declaring one the device will not produce is a manifest the
+    planner grounds against wrongly (SPEC section 7.1).
+    """
+
+    width: int
+    height: int
+    format: str = "jpeg"
+
+    def as_attributes(self, max_fps: int) -> dict[str, object]:
+        """The camera attributes for the manifest (SPEC section 7.2)."""
+        return {
+            "formats": [self.format],
+            "resolutions": [f"{self.width}x{self.height}"],
+            "max_fps": max_fps,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class Frame:
     """One captured image, already JPEG-encoded."""
 
@@ -75,7 +99,7 @@ class Frame:
 class CaptureSource(Protocol):
     """Where frames come from."""
 
-    def open(self) -> None: ...
+    def open(self) -> FrameFormat: ...
 
     def capture(self) -> Frame: ...
 
@@ -116,8 +140,9 @@ class StubCamera:
         self._opened = False
         self.captures = 0
 
-    def open(self) -> None:
+    def open(self) -> FrameFormat:
         self._opened = True
+        return FrameFormat(width=self._frame.width, height=self._frame.height)
 
     def capture(self) -> Frame:
         if not self._opened:
@@ -158,7 +183,7 @@ class OpenCVCamera:
         self._timeout_s = timeout_s
         self._capture = None
 
-    def open(self) -> None:
+    def open(self) -> FrameFormat:
         cv2 = _load_cv2()
 
         capture = cv2.VideoCapture(self._device)
@@ -170,7 +195,27 @@ class OpenCVCamera:
             raise CameraPermissionError(_denied_message(self._device))
 
         self._capture = capture
-        log.info("camera %s open", self._device)
+
+        # What the device settled on, which is often not what was asked for.
+        # Some backends only report truthfully once a frame has been read, so
+        # a zero here falls back to measuring an actual frame.
+        width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        if width <= 0 or height <= 0:
+            frame = self.capture()
+            width, height = frame.width, frame.height
+
+        if (width, height) != (self._width, self._height):
+            log.info(
+                "camera opened at %dx%d, not the %dx%d requested; declaring the real size",
+                width,
+                height,
+                self._width,
+                self._height,
+            )
+
+        log.info("camera %s open at %dx%d", self._device, width, height)
+        return FrameFormat(width=width, height=height)
 
     def capture(self) -> Frame:
         if self._capture is None:
@@ -209,17 +254,9 @@ def _load_cv2():
 
 
 def _denied_message(device: int) -> str:
-    """Name the permission, because the alternative is a silent hang.
-
-    OpenCV cannot distinguish "refused by TCC" from "no such device": both
-    surface as a capture that will not open or will not read. Rather than
-    guess, this says what is true and what to check, most likely cause first.
-    """
-    return (
-        f"camera {device} would not produce a frame. On macOS the usual cause is the "
-        f"camera permission: the grant belongs to the process that asks, so Terminal "
-        f"or your IDE needs it under System Settings > Privacy & Security > Camera. "
-        f"The first capture from a new process shows a prompt, and an unanswered "
-        f"prompt looks exactly like this. Otherwise the device may be missing or in "
-        f"use by another application. See docs/runbook-laptop-body.md"
+    """Name the permission, because the alternative is a silent hang."""
+    return tcc_message(
+        "Camera",
+        device,
+        also="the device may be missing or in use by another application",
     )

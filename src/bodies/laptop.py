@@ -1,6 +1,12 @@
 """The laptop body: the machine the brain is running on, as a body.
 
-Step 4.1 gives it a camera. Microphone and speaker follow in 4.2 and 4.3.
+Steps 4.1 and 4.2 give it a camera and a microphone. The speaker follows in
+4.3.
+
+The manifest is built from what the devices actually opened at, never from
+what was asked for. Hardware substitutes silently: a camera can hand back a
+different resolution and a microphone a different sample rate, and step 6.1
+feeds this audio to Whisper, which cares about the real rate.
 
 It boots into `ok`, not `safe_hold`. SPEC section 7.1 requires `safe_hold`
 of a body that can move, and this one cannot: the worst a camera does is
@@ -20,9 +26,13 @@ import contextlib
 import logging
 import os
 
+from bodies.audio import (
+    DEFAULT_CHUNK_MS,
+    AudioSource,
+    MicrophoneError,
+    SoundDeviceMicrophone,
+)
 from bodies.camera import (
-    DEFAULT_HEIGHT,
-    DEFAULT_WIDTH,
     CameraError,
     CaptureSource,
     OpenCVCamera,
@@ -40,56 +50,80 @@ DEFAULT_BODY_ID = "laptop-01"
 DEFAULT_URL = "ws://127.0.0.1:8765"
 
 CAMERA_ID = "cam0"
+MICROPHONE_ID = "mic0"
+
+DEFAULT_MAX_FPS = 5
 
 
 def laptop_manifest(
     body_id: str = DEFAULT_BODY_ID,
     *,
-    width: int = DEFAULT_WIDTH,
-    height: int = DEFAULT_HEIGHT,
-    max_fps: int = 5,
+    camera: dict[str, object] | None = None,
+    microphone: dict[str, object] | None = None,
 ) -> Manifest:
     """What this body declares (SPEC section 7.1).
 
-    `actions` lists `snapshot` alone. The camera class registry also defines
-    `start_stream` and `stop_stream`, and a subset is explicitly allowed
-    (section 7.1). Declaring streaming before it exists would make the
-    manifest a promise the body cannot keep, and the manifest is what the
-    planner grounds against.
+    Attributes are passed in, not assumed, because they come from what the
+    devices actually opened at. A camera asked for 1280x720 may hand back
+    640x480 and a microphone asked for 16 kHz may hand back 48 kHz, and both
+    do so silently. Declaring the request rather than the reality would make
+    the manifest a lie the planner grounds against, and would send Whisper
+    audio at a rate it was not told about (step 6.1).
+
+    A device that did not open is left out entirely. A manifest naming a
+    capability the body cannot deliver is worse than a smaller manifest.
+
+    `actions` lists `snapshot` alone for the camera. The class registry also
+    defines `start_stream` and `stop_stream`; a subset is explicitly allowed
+    (section 7.1), and declaring streaming before it exists would be another
+    promise the body cannot keep.
     """
+    capabilities: list[dict[str, object]] = [
+        {
+            "id": "sys",
+            "class": "system",
+            "actions": ["ping", "clear_safe_hold"],
+            "events": ["state", "log"],
+        }
+    ]
+
+    if camera is not None:
+        capabilities.append(
+            {
+                "id": CAMERA_ID,
+                "class": "camera",
+                "attributes": camera,
+                "actions": ["snapshot"],
+                "events": ["frame"],
+            }
+        )
+
+    if microphone is not None:
+        capabilities.append(
+            {
+                "id": MICROPHONE_ID,
+                "class": "microphone",
+                "attributes": microphone,
+                "actions": ["start_capture", "stop_capture"],
+                "events": ["audio_chunk"],
+            }
+        )
+
     return Manifest.model_validate(
         {
             "body_id": body_id,
             "display_name": "Laptop body",
             "hardware_class": "workstation",
-            # No actuation: nothing here can move (SPEC section 7.1).
+            # Nothing here moves, so it may boot ok (SPEC section 7.1).
             "boot_state": "ok",
             "adapter": {"name": "laptop-adapter", "version": "0.1.0"},
-            "capabilities": [
-                {
-                    "id": "sys",
-                    "class": "system",
-                    "actions": ["ping", "clear_safe_hold"],
-                    "events": ["state", "log"],
-                },
-                {
-                    "id": CAMERA_ID,
-                    "class": "camera",
-                    "attributes": {
-                        "formats": ["jpeg"],
-                        "resolutions": [f"{width}x{height}"],
-                        "max_fps": max_fps,
-                    },
-                    "actions": ["snapshot"],
-                    "events": ["frame"],
-                },
-            ],
+            "capabilities": capabilities,
         }
     )
 
 
 class LaptopBody:
-    """Camera, on the machine you are sitting at."""
+    """Camera and microphone, on the machine you are sitting at."""
 
     def __init__(
         self,
@@ -97,15 +131,23 @@ class LaptopBody:
         *,
         body_id: str = DEFAULT_BODY_ID,
         camera: CaptureSource | None = None,
+        microphone: AudioSource | None = None,
+        chunk_ms: int = DEFAULT_CHUNK_MS,
         clock: Clock = SYSTEM_CLOCK,
         sleep: Sleeper = asyncio.sleep,
     ) -> None:
         self._clock = clock
         self._sleep = sleep
-        self._camera = camera if camera is not None else OpenCVCamera()
-        self._camera_open = False
+        self._chunk_ms = chunk_ms
 
-        manifest = laptop_manifest(body_id)
+        self._camera = camera if camera is not None else OpenCVCamera()
+        self._microphone = microphone if microphone is not None else SoundDeviceMicrophone()
+        self._camera_open = False
+        self._audio_format = None
+        self._capture_task: asyncio.Task | None = None
+        self._capture_trace: str | None = None
+
+        manifest = laptop_manifest(body_id, **self._probe())
         self.safety = SafetyState(manifest.boot_state)
 
         self.client = BodyClient(
@@ -122,7 +164,40 @@ class LaptopBody:
 
         self.dispatch.on("sys", "ping", self._ping)
         self.dispatch.on("sys", "clear_safe_hold", self._clear_safe_hold)
-        self.dispatch.on(CAMERA_ID, "snapshot", self._snapshot)
+        if self.has_camera:
+            self.dispatch.on(CAMERA_ID, "snapshot", self._snapshot)
+        if self.has_microphone:
+            self.dispatch.on(MICROPHONE_ID, "start_capture", self._start_capture)
+            self.dispatch.on(MICROPHONE_ID, "stop_capture", self._stop_capture)
+
+    def _probe(self) -> dict[str, dict[str, object] | None]:
+        """Open each device to learn what it really is.
+
+        Done before the handshake so the manifest describes reality. A device
+        that will not open is reported and left out: the alternative is a
+        manifest that promises what the body cannot do, and the planner
+        grounds its plans on that promise (ADR-0003).
+
+        This is also where a macOS permission prompt appears, which is the
+        right moment for it: at startup, attached to launching the body,
+        rather than in the middle of a mission.
+        """
+        attributes: dict[str, dict[str, object] | None] = {"camera": None, "microphone": None}
+
+        try:
+            frame_format = self._camera.open()
+            self._camera_open = True
+            attributes["camera"] = frame_format.as_attributes(DEFAULT_MAX_FPS)
+        except CameraError as exc:
+            log.warning("no camera capability: %s", exc)
+
+        try:
+            self._audio_format = self._microphone.open()
+            attributes["microphone"] = self._audio_format.as_attributes()
+        except MicrophoneError as exc:
+            log.warning("no microphone capability: %s", exc)
+
+        return attributes
 
     @property
     def state(self) -> str:
@@ -132,13 +207,31 @@ class LaptopBody:
     def camera(self) -> CaptureSource:
         return self._camera
 
+    @property
+    def microphone(self) -> AudioSource:
+        return self._microphone
+
+    @property
+    def has_camera(self) -> bool:
+        return self._camera_open
+
+    @property
+    def has_microphone(self) -> bool:
+        return self._audio_format is not None
+
+    @property
+    def capturing(self) -> bool:
+        return self._capture_task is not None and not self._capture_task.done()
+
     async def run(self) -> None:
         await self.client.connect()
         await self.client.announce_boot_state()
         try:
             await self.client.run_loops()
         finally:
+            await self.stop_capture()
             self.close_camera()
+            self.close_microphone()
             await self.client.close()
 
     def close_camera(self) -> None:
@@ -146,6 +239,12 @@ class LaptopBody:
             with contextlib.suppress(Exception):
                 self._camera.close()
             self._camera_open = False
+
+    def close_microphone(self) -> None:
+        if self._audio_format is not None:
+            with contextlib.suppress(Exception):
+                self._microphone.close()
+            self._audio_format = None
 
     async def emit_telemetry(self, elapsed_s: float) -> None:
         """No periodic telemetry. A camera reports when asked, not on a timer.
@@ -190,6 +289,7 @@ class LaptopBody:
         stopped, which is worse than useless in a log.
         """
         self.close_camera()
+        await self.stop_capture()
         transition = self.safety.estop(reason)
         await self._announce(transition)
 
@@ -198,6 +298,7 @@ class LaptopBody:
 
     async def enter_safe_hold(self, cause: str) -> None:
         self.close_camera()
+        await self.stop_capture()
         await self._announce(self.safety.enter_safe_hold(cause))
 
     # Handlers
@@ -216,6 +317,78 @@ class LaptopBody:
             )
         return succeeded(state=self.safety.state.value, changed=transition.changed)
 
+    async def _start_capture(self, command: CommandEnvelope) -> Outcome:
+        """Begin push-to-talk capture (SPEC section 7.2).
+
+        Returns as soon as capture is running rather than when it ends. The
+        span is the act of starting, not the recording: a command whose
+        result waited for the operator to let go of the button would sit past
+        its own TTL every time (SPEC section 6.6).
+        """
+        if self._audio_format is None:
+            return failed("microphone_unavailable", "this body has no microphone")
+
+        if self.capturing:
+            return succeeded(capturing=True, changed=False)
+
+        self._capture_trace = command.trace_id
+        self._capture_task = asyncio.create_task(self._capture_loop())
+
+        return succeeded(
+            capturing=True,
+            changed=True,
+            **self._audio_format.as_attributes(),
+        )
+
+    async def _stop_capture(self, command: CommandEnvelope) -> Outcome:
+        chunks = await self.stop_capture()
+        return succeeded(capturing=False, chunks=chunks)
+
+    async def stop_capture(self) -> int:
+        """End capture and report how many chunks were sent."""
+        task = self._capture_task
+        self._capture_task = None
+        self._capture_trace = None
+
+        if task is None:
+            return 0
+
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await task
+        return getattr(task, "_chunks_sent", 0)
+
+    async def _capture_loop(self) -> None:
+        """Read the microphone and emit a chunk at a time.
+
+        Chunked rather than one blob at the end so a long press does not sit
+        silent and then arrive all at once, and so a session killed mid-press
+        still holds whatever was said before it died.
+        """
+        seconds = self._chunk_ms / 1000
+        sent = 0
+        task = asyncio.current_task()
+
+        try:
+            while True:
+                chunk = await asyncio.to_thread(self._microphone.read, seconds)
+                await self.client.emit(
+                    MICROPHONE_ID,
+                    "audio_chunk",
+                    chunk.as_event_data(),
+                    # Speech is not telemetry. A dropped chunk is a hole in a
+                    # sentence, and the next one does not replace it.
+                    droppable=False,
+                    trace_id=self._capture_trace,
+                )
+                sent += 1
+                if task is not None:
+                    task._chunks_sent = sent  # type: ignore[attr-defined]
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.warning("body %s: capture stopped: %s", self.client.body_id, exc)
+
     async def _snapshot(self, command: CommandEnvelope) -> Outcome:
         """Take one picture and put it on the perception stream.
 
@@ -229,10 +402,10 @@ class LaptopBody:
         droppable because a dropped one is followed by another; a snapshot was
         asked for, and dropping it would answer a question with silence.
         """
+        if not self._camera_open:
+            return failed("camera_unavailable", "this body has no camera")
+
         try:
-            if not self._camera_open:
-                self._camera.open()
-                self._camera_open = True
             frame = self._camera.capture()
         except CameraError as exc:
             self.close_camera()

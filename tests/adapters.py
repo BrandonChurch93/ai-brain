@@ -11,9 +11,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from bodies.audio import StubMicrophone
 from bodies.camera import StubCamera
 from bodies.client import BodyConfig
-from bodies.laptop import LaptopBody, laptop_manifest
+from bodies.laptop import DEFAULT_MAX_FPS, LaptopBody, laptop_manifest
 from bodies.mock import MockBody, mock_manifest
 from wire import Manifest
 from wire.clock import SYSTEM_CLOCK, Clock
@@ -45,20 +46,36 @@ class AdapterCase:
 
 
 def _stubbed_laptop(config: BodyConfig, **kwargs: Any) -> Adapter:
-    """The laptop body with a stub capture source.
+    """The laptop body with stub capture sources.
 
     The adapter under test is the real one. Only the hardware behind it is
-    replaced, so CI exercises every line of the body without a camera or a
-    permission prompt nobody is there to answer.
+    replaced, so CI exercises every line of the body without a camera, a
+    microphone, or a permission prompt nobody is there to answer.
     """
-    return LaptopBody(config, camera=StubCamera(), **kwargs)
+    return LaptopBody(config, camera=StubCamera(), microphone=StubMicrophone(), **kwargs)
+
+
+def _stubbed_laptop_manifest() -> Manifest:
+    """What the stubbed laptop declares.
+
+    Derived by probing the same stubs the body probes, rather than written
+    out here, so the conformance suite compares the body against its own
+    devices instead of against a copy that could drift from them.
+    """
+    camera, microphone = StubCamera(), StubMicrophone()
+    return laptop_manifest(
+        camera=camera.open().as_attributes(DEFAULT_MAX_FPS),
+        microphone=microphone.open().as_attributes(),
+    )
 
 
 ADAPTERS: list[AdapterCase] = [
     AdapterCase(name="mock", manifest=mock_manifest, build=MockBody),
     AdapterCase(
         name="laptop",
-        manifest=laptop_manifest,
+        # Built from what the stubs report, exactly as the real body builds
+        # it from what its devices report.
+        manifest=_stubbed_laptop_manifest,
         build=_stubbed_laptop,
         emits_telemetry=False,
     ),

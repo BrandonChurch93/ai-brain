@@ -16,6 +16,7 @@ dependencies = [
 #   uv sync --extra laptop
 laptop = [
     "opencv-python>=5.0",
+    "sounddevice>=0.5",
 ]
 
 [project.scripts]
