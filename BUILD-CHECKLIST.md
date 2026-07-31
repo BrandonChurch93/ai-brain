@@ -69,7 +69,7 @@ References used throughout: CLAUDE.md (rules), STATE.md (V1 definition and accep
 - [x] 3.1 Mock body adapter, separate process, connects as a client: manifest with `sys`, `differential_drive`, `range_sensor`; `boot_state: safe_hold`; fake odometry and range events on a timer.
       refs: SPEC §7; ADR-0003
       done: handshake completes; manifest validates; sys state event emitted on boot.
-- [ ] 3.2 Body-side command semantics: TTL enforcement from receipt time, span_id dedupe within session, exactly one terminal result per span.
+- [x] 3.2 Body-side command semantics: TTL enforcement from receipt time, span_id dedupe within session, exactly one terminal result per span.
       refs: SPEC §6.6-6.7
       done: tests for expired TTL (terminal expired, never executed), duplicate span (single execution), double-terminal prevented.
 - [ ] 3.3 Latching: safe_hold on brain-heartbeat lease miss; estop and estop_clear per spec; clear_safe_hold via sys; no self-clearing on reconnect.
@@ -137,7 +137,7 @@ References used throughout: CLAUDE.md (rules), STATE.md (V1 definition and accep
 - [ ] 7.2 Full deterministic replay pass over a real (not synthetic) session including LLM decisions.
       refs: ADR-0005
       done: acceptance test 3 green on a genuine session.
-- [ ] 7.3 README for the public repo (working-title notice, what this is, architecture sketch, how to run the demo); STATE.md rewritten to V1-complete; ADR sweep for any drift between records and reality. Revisit schema packaging as package data: v1 finds `protocol/schemas/` by walking up from the installed module, with `BRAIN_PROTOCOL_SCHEMA` as the override, which works from a checkout but not from a wheel installed away from the repo tree.
+- [ ] 7.3 README for the public repo (working-title notice, what this is, architecture sketch, how to run the demo); STATE.md rewritten to V1-complete; ADR sweep for any drift between records and reality. Revisit schema packaging as package data: v1 finds `protocol/schemas/` by walking up from the installed module, with `BRAIN_PROTOCOL_SCHEMA` as the override, which works from a checkout but not from a wheel installed away from the repo tree. Proper packaging fixes this and the `PYTHONPATH=src` requirement together: both exist only because the project is run from a source tree rather than installed. Root cause of the second: uv writes its editable-install `.pth` with the macOS `UF_HIDDEN` flag, and CPython's `site.addpackage` silently skips hidden `.pth` files.
       done: fresh-instance test: a new Claude Code session, given only the repo, correctly explains the system and runs the test suite.
 
 **Done:** all four acceptance tests in STATE.md green. V1 exists.

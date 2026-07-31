@@ -21,7 +21,9 @@ import os
 from dataclasses import dataclass
 
 from bodies.client import BodyClient, BodyConfig, Sleeper
-from wire import Manifest
+from bodies.commands import CommandLedger, Outcome, rejected, succeeded
+from bodies.dispatch import CommandDispatcher
+from wire import CommandEnvelope, Manifest, Message, Timestamp
 from wire.clock import SYSTEM_CLOCK, Clock
 
 log = logging.getLogger("bodies.mock")
@@ -132,9 +134,76 @@ class MockBody:
         self.client = BodyClient(
             mock_manifest(body_id),
             config,
+            on_message=self._on_message,
             clock=clock,
             sleep=sleep,
         )
+        self.ledger = CommandLedger(clock)
+        self.dispatch = CommandDispatcher(self.client, self.ledger)
+        self._register_handlers()
+
+    def _register_handlers(self) -> None:
+        """One handler per action the manifest declares.
+
+        The manifest is a promise. An action declared but unhandled would
+        make it a lie, and the manifest is what the planner grounds against
+        (ADR-0003), so the conformance suite checks this correspondence.
+        """
+        self.dispatch.on("sys", "ping", self._ping)
+        self.dispatch.on("sys", "clear_safe_hold", self._clear_safe_hold)
+        self.dispatch.on("drive0", "set_velocity", self._set_velocity)
+        self.dispatch.on("drive0", "stop", self._stop)
+        self.dispatch.on("range0", "read", self._read_range)
+
+    async def _on_message(
+        self, client: BodyClient, message: Message, received_at: Timestamp
+    ) -> None:
+        if isinstance(message, CommandEnvelope):
+            await self.dispatch.handle(message, received_at)
+
+    # Handlers
+
+    def _ping(self, command: CommandEnvelope) -> Outcome:
+        return succeeded(pong=True, body_id=self.client.body_id)
+
+    async def _clear_safe_hold(self, command: CommandEnvelope) -> Outcome:
+        """Release a latched safe_hold (SPEC section 8.2).
+
+        The latching rules that decide when this is allowed to succeed are
+        checklist step 3.3. It exists now because the manifest declares it,
+        and a declared action that does nothing is worse than one that is
+        not declared at all.
+        """
+        if self.client.state == "ok":
+            return succeeded(state="ok", changed=False)
+
+        await self.client.emit_state("ok", cause="clear_safe_hold")
+        return succeeded(state="ok", changed=True)
+
+    async def _set_velocity(self, command: CommandEnvelope) -> Outcome:
+        params = command.payload.params
+        linear = float(params.get("linear_mps", 0.0))
+        angular = float(params.get("angular_rps", 0.0))
+
+        # The brain's validator grounds these against the manifest before
+        # sending (ADR-0004). The body checks anyway: SPEC section 6.6 says
+        # the body still enforces its own checks and MAY reject.
+        if abs(linear) > MAX_LINEAR_MPS or abs(angular) > MAX_ANGULAR_RPS:
+            return rejected(
+                "invalid_params",
+                f"velocity outside declared bounds ({MAX_LINEAR_MPS} m/s, {MAX_ANGULAR_RPS} rad/s)",
+            )
+
+        self._pose.linear_mps = linear
+        self._pose.angular_rps = angular
+        return succeeded(linear_mps=linear, angular_rps=angular)
+
+    def _stop(self, command: CommandEnvelope) -> Outcome:
+        self._pose.stop()
+        return succeeded(stopped=True)
+
+    def _read_range(self, command: CommandEnvelope) -> Outcome:
+        return succeeded(meters=self._fake_range(), valid=True)
 
     @property
     def pose(self) -> Pose:

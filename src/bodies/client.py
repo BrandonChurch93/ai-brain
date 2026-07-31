@@ -35,6 +35,7 @@ from wire import (
     Message,
     ProtocolValidationError,
     RejectEnvelope,
+    Timestamp,
     WelcomeEnvelope,
     decode,
     encode,
@@ -55,7 +56,7 @@ SYS = "sys"
 STATE_EVENT = "state"
 
 Sleeper = Callable[[float], Awaitable[None]]
-MessageHandler = Callable[["BodyClient", Message], Awaitable[None]]
+MessageHandler = Callable[["BodyClient", Message, Timestamp], Awaitable[None]]
 
 
 class HandshakeRejected(RuntimeError):
@@ -147,6 +148,22 @@ class BodyClient:
     @property
     def connected(self) -> bool:
         return self._session is not None
+
+    @property
+    def clock(self) -> Clock:
+        return self._clock
+
+    def next_seq(self) -> int:
+        """Take the next outbound sequence number (SPEC section 4)."""
+        return self._seq.take()
+
+    def stamp(self) -> Timestamp:
+        """A timestamp on this body's clock."""
+        return now(self._clock)
+
+    async def send(self, message: Message) -> None:
+        """Send an already-built message. Validated at the boundary."""
+        await self._send(message)
 
     # Session lifecycle
 
@@ -318,6 +335,11 @@ class BodyClient:
 
         try:
             async for raw in self._connection:
+                # Stamped before parsing. A command's TTL is measured from
+                # the body's receipt, so the clock must start at the wire and
+                # not after validation (SPEC section 6.6).
+                received_at = now(self._clock)
+
                 try:
                     message = decode(raw)
                 except (MalformedFrameError, ProtocolValidationError) as exc:
@@ -325,6 +347,6 @@ class BodyClient:
                     continue
 
                 if self._on_message is not None:
-                    await self._on_message(self, message)
+                    await self._on_message(self, message, received_at)
         except websockets.exceptions.ConnectionClosed:
             return
