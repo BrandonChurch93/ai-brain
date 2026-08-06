@@ -98,7 +98,7 @@ References used throughout: CLAUDE.md (rules), STATE.md (V1 definition and accep
 
 ## Phase 5 · LLM layer, planner, memory
 
-- [ ] 5.1 Provider-agnostic LLM interface with adapters: Anthropic, OpenAI, Google, Ollama. Routing table in config keyed by role: planner, conversation, vision, classifier, reflex. Token counts and latency to the `llm_io` channel on every call.
+- [x] 5.1 Provider-agnostic LLM interface with adapters: Anthropic, OpenAI, Google, Ollama. Routing table in config keyed by role: planner, conversation, vision, classifier, reflex. Token counts and latency to the `llm_io` channel on every call.
       refs: ADR-0007, ADR-0005
       done: same prompt runs through all four adapters in a smoke test (skippable per-provider by env).
 - [ ] 5.2 Eval harness v0: about 20 cases across plan decomposition, capability grounding, structured-output validity, and refusal of infeasible commands; scoring script outputs a comparison table.

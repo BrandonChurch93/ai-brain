@@ -7,7 +7,13 @@ dependencies = [
     "jsonschema[format-nongpl]>=4.23",
     "mcap>=1.4",
     "pydantic>=2.13",
-    "websockets>=17.0",
+    # The floor is what the code actually needs: `websockets.asyncio`, which
+    # arrived in 13.0. It used to read >=17.0, which was "whatever was newest
+    # in step 1.2" rather than a requirement, and google-genai caps the same
+    # package below 17, so the tighter pin made one provider SDK
+    # uninstallable. The effective ceiling now comes from that extra and
+    # lifts on its own when upstream relaxes.
+    "websockets>=13.0",
 ]
 
 [project.optional-dependencies]
@@ -17,6 +23,21 @@ dependencies = [
 laptop = [
     "opencv-python>=5.0",
     "sounddevice>=0.5",
+]
+# Provider SDKs, same reasoning as the capture hardware: the default install
+# and CI must need neither an SDK nor an API key. Each provider is separately
+# installable so a machine that only ever talks to one is not made to carry
+# four. Install all of them with:
+#   uv sync --extra llm
+anthropic = ["anthropic>=0.120"]
+openai = ["openai>=2.53"]
+google = ["google-genai>=2.17"]
+ollama = ["ollama>=0.6"]
+llm = [
+    "anthropic>=0.120",
+    "openai>=2.53",
+    "google-genai>=2.17",
+    "ollama>=0.6",
 ]
 
 [project.scripts]
@@ -55,6 +76,7 @@ markers = [
     "slow: consumes real wall-clock time; the suite keeps at most one",
     "camera: needs a real camera and a granted macOS permission; local only",
     "speaker: makes audible noise through the real synthesiser; local only",
+    "llm_smoke: calls a real model over the network and costs money; local only",
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
