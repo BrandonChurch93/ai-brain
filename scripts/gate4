@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Gate 4: the laptop body sees and speaks. One command, no arguments.
+# Real camera, real synthesiser. See scripts/gate4_demo.py for what to expect.
+set -uo pipefail
+
+cd "$(dirname "$0")/.."
+
+# PYTHONPATH is set here rather than relying on the editable install: on
+# macOS uv writes its .pth with the UF_HIDDEN flag and CPython's site module
+# silently skips hidden .pth files, so src/ never reaches sys.path.
+export PYTHONPATH=src
+
+exec uv run python scripts/gate4_demo.py "$@"

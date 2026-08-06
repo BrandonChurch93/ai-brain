@@ -97,6 +97,21 @@ asyncio.run(main())
 Run them after granting the permissions. The first run may still show a
 dialog if the terminal you are in has not asked before.
 
+## The Gate 4 demo
+
+```
+scripts/gate4
+```
+
+One command. It checks the capture extras are installed, opens the real
+camera (answer the permission dialog on the first run), connects the body,
+takes a picture, writes it to `var/gate4-snapshot.jpg`, then says a sentence
+out loud. The session lands in `var/logs/gate4-demo.mcap`.
+
+The microphone is deliberately not used, so it asks for one permission
+rather than two. If the camera is denied, the script stops with the settings
+path rather than hanging.
+
 ## What the body does
 
 - Declares `sys`, plus `cam0`, `mic0` and `spk0` for whichever devices

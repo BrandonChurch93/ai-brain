@@ -256,6 +256,10 @@ class LaptopBody:
         return self._microphone
 
     @property
+    def speaker(self) -> Speaker:
+        return self._speaker
+
+    @property
     def has_camera(self) -> bool:
         return self._camera_open
 
